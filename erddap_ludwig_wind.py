@@ -35,8 +35,15 @@ def add_erddap_ludwig_wind(run_base_dir,run_start,run_stop,old_bc_fn):
         url='http://sfbaynutrients.sfei.org/erddap/griddap/wind_ludwig_20170621'
         ds=xr.open_dataset(url)
 
-        dio.dataset_to_dfm_wind(ds,data_start,data_stop,target_filename_base,
-                                extra_header="# downloaded from %s"%url)
+        # somewhat arbitrary cutoff of at least 4 per day
+        min_records=(data_stop-data_start)/DAY * 4
+        avail_records=dio.dataset_to_dfm_wind(ds,data_start,data_stop,target_filename_base,
+                                              min_records=min_records,
+                                              extra_header="# downloaded from %s"%url)
+        if avail_records<min_records:
+            log.warning("Wind data not available for %s -- %s"%(run_start.astype('M8[D]'),
+                                                                run_stop.astype('M8[D]')))
+            return
 
     # and add wind to the boundary forcing
     wind_stanza=["QUANTITY=windx",
