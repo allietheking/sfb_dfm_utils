@@ -5,7 +5,7 @@ log=logging.getLogger('sfb_dfm_utils')
 import numpy as np
 import xarray as xr
 
-from stompy import utils
+from stompy import (utils, filters)
 from stompy.io.local import noaa_coops
 import stompy.model.delft.io as dio
 
@@ -33,11 +33,14 @@ def add_ocean(run_base_dir,
 
     Ocean BCs from Point Reyes
     """
+    # get a few extra days of data to allow for transients in the low pass filter.
+    pad_time=np.timedelta64(5,'D')
     
     ptreyes_raw_fn=os.path.join(run_base_dir,'ptreyes-raw.nc')
     if 1:
         if not os.path.exists(ptreyes_raw_fn):
-            ptreyes_raw=noaa_coops.coops_dataset("9415020",run_start,run_stop,
+            ptreyes_raw=noaa_coops.coops_dataset("9415020",
+                                                 run_start-pad_time,run_stop+pad_time,
                                                  ["water_level","water_temperature"],
                                                  days_per_request=30)
 
@@ -48,6 +51,19 @@ def add_ocean(run_base_dir,
         ptreyes=xr.open_dataset(ptreyes_raw_fn).isel(station=0)
 
         water_level=utils.fill_tidal_data(ptreyes.water_level)
+
+        if 0: # FIR filter, has to be shorter to avoid attenuation
+            # And lowpass at 1 hour to get rid of wave energy
+            # with the fir filter, that's about a 2% amplitude loss at 6h.
+            winsize_lp=int( np.timedelta64(2,'h') / np.median(np.diff(water_level[:].time)) ) 
+            water_level[:] = filters.lowpass_fir(water_level[:].values,winsize_lp)
+        else: # IIR butterworth.  Nicer, with minor artifacts at ends
+            # 3 hours, defaults to 4th order.
+            water_level[:] = filters.lowpass(water_level[:].values,
+                                             utils.to_dnum(water_level.time),
+                                             cutoff=3./24)
+                                             
+                                             
         fill_data(ptreyes.water_temperature)
         water_temp=ptreyes.water_temperature
 
