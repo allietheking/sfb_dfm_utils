@@ -26,12 +26,14 @@ def add_ocean(run_base_dir,
               all_flows_unit=False):
     """
     Ocean:
-    Water level data from station 46214 (apparently from Yi Chao's ROMS?)
-      no spatial variation
-    Maybe salinity from Yi Chao ROMS?  That's what the thesis says, but the
-    actual inputs look like constant 33
-
-    Ocean BCs from Point Reyes
+    Silvia used:
+        Water level data from station 46214 (apparently from Yi Chao's ROMS?)
+          no spatial variation
+        Maybe salinity from Yi Chao ROMS?  That's what the thesis says, but the
+        actual inputs look like constant 33
+    Here I'm using data from NOAA Point Reyes.
+        waterlevel, water temperature from Point Reyes.
+    When temperature is not available, use constant 15 degrees
     """
     # get a few extra days of data to allow for transients in the low pass filter.
     pad_time=np.timedelta64(5,'D')
@@ -63,15 +65,19 @@ def add_ocean(run_base_dir,
                                              utils.to_dnum(water_level.time),
                                              cutoff=3./24)
                                              
+        if 'water_temperature' not in ptreyes:
+            log.warning("Water temperature was not found in NOAA data.  Will use constant 15")
+            water_temp=15+0*ptreyes.water_level
+            water_temp.name='water_temperature'
+        else:
+            fill_data(ptreyes.water_temperature)
+            water_temp=ptreyes.water_temperature
                                              
-        fill_data(ptreyes.water_temperature)
-        water_temp=ptreyes.water_temperature
-
         if all_flows_unit:
             print("-=-=-=- USING 35 PPT WHILE TESTING! -=-=-=-")
-            salinity=35 + 0*ptreyes.water_temperature
+            salinity=35 + 0*water_level
         else:
-            salinity=33 + 0*ptreyes.water_temperature
+            salinity=33 + 0*water_level
         salinity.name='salinity'
             
     if 1: # Write it all out
