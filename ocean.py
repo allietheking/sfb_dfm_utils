@@ -23,7 +23,8 @@ def add_ocean(run_base_dir,
               run_start,run_stop,ref_date,
               static_dir,
               grid,old_bc_fn,
-              all_flows_unit=False):
+              all_flows_unit=False,
+              factor=1.0):
     """
     Ocean:
     Silvia used:
@@ -34,6 +35,8 @@ def add_ocean(run_base_dir,
     Here I'm using data from NOAA Point Reyes.
         waterlevel, water temperature from Point Reyes.
     When temperature is not available, use constant 15 degrees
+
+    factor: a scaling factor applied to tide data to adjust amplitude around MSL.
     """
     # get a few extra days of data to allow for transients in the low pass filter.
     pad_time=np.timedelta64(5,'D')
@@ -64,7 +67,13 @@ def add_ocean(run_base_dir,
             water_level[:] = filters.lowpass(water_level[:].values,
                                              utils.to_dnum(water_level.time),
                                              cutoff=3./24)
-                                             
+
+        if 1: # apply factor:
+            msl= 2.152 - 1.214 # MSL(m) - NAVD88(m)
+            if factor!=1.0:
+                log.info("Scaling tidal forcing amplitude by %.3f"%factor)
+            water_level[:] = msl + factor*(water_level[:].values - msl)
+            
         if 'water_temperature' not in ptreyes:
             log.warning("Water temperature was not found in NOAA data.  Will use constant 15")
             water_temp=15+0*ptreyes.water_level
