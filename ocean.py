@@ -24,6 +24,7 @@ def add_ocean(run_base_dir,
               static_dir,
               grid,old_bc_fn,
               all_flows_unit=False,
+              lag_seconds=0.0,
               factor=1.0):
     """
     Ocean:
@@ -37,6 +38,8 @@ def add_ocean(run_base_dir,
     When temperature is not available, use constant 15 degrees
 
     factor: a scaling factor applied to tide data to adjust amplitude around MSL.
+    lag_seconds: to shift ocean boundary condition in time, a positive value 
+    applying it later in time.
     """
     # get a few extra days of data to allow for transients in the low pass filter.
     pad_time=np.timedelta64(5,'D')
@@ -44,7 +47,20 @@ def add_ocean(run_base_dir,
     ptreyes_raw_fn=os.path.join(run_base_dir,'ptreyes-raw.nc')
     if 1:
         if not os.path.exists(ptreyes_raw_fn):
-            ptreyes_raw=noaa_coops.coops_dataset("9415020",
+            if 1: 
+                log.warning("TEMPORARILY USING FORT POINT TIDES")
+                tide_gage="9414290" # Fort Point
+                # Fort Point mean tide range is 1.248m, vs. 1.193 at Point Reyes.
+                # apply rough correction to amplitude.
+                # S2 phase 316.2 at Pt Reyes, 336.2 for Ft. Point.
+                # 20 deg difference for a 12h tide, or 30 deg/hr, so
+                # that's a lag of 40 minutes.
+                factor *= 1.193 / 1.248
+                lag_seconds -= 40*60.
+            else:
+                tide_gage="9415020" # Pt Reyes 
+                
+            ptreyes_raw=noaa_coops.coops_dataset(tide_gage,
                                                  run_start-pad_time,run_stop+pad_time,
                                                  ["water_level","water_temperature"],
                                                  days_per_request=30)
@@ -69,10 +85,18 @@ def add_ocean(run_base_dir,
                                              cutoff=3./24)
 
         if 1: # apply factor:
-            msl= 2.152 - 1.214 # MSL(m) - NAVD88(m)
+            msl= 2.152 - 1.214 # MSL(m) - NAVD88(m) for Point Reyes
             if factor!=1.0:
                 log.info("Scaling tidal forcing amplitude by %.3f"%factor)
             water_level[:] = msl + factor*(water_level[:].values - msl)
+
+        if 1: # apply lag
+            if lag_seconds!=0.0:
+                # sign:  if lag_seconds is positive, then I want the result
+                # for time.values[0] to come from original data at time.valules[0]-lag_seconds
+                water_level[:] = np.interp( utils.to_dnum(ptreyes.time.values),
+                                            utils.to_dnum(ptreyes.time.values)-lag_seconds/86400.,
+                                            ptreyes.water_level.values )
             
         if 'water_temperature' not in ptreyes:
             log.warning("Water temperature was not found in NOAA data.  Will use constant 15")
