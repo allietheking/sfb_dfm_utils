@@ -55,8 +55,12 @@ def add_ocean(run_base_dir,
                 # S2 phase 316.2 at Pt Reyes, 336.2 for Ft. Point.
                 # 20 deg difference for a 12h tide, or 30 deg/hr, so
                 # that's a lag of 40 minutes.
-                factor *= 1.193 / 1.248
-                lag_seconds -= 40*60.
+                # First go I got this backwards, and wound up with lags
+                # at Presidio and Alameda of 4600 and 4400s.  That was
+                # with lag_seconds -= 40*60.
+                # Also got amplitudes 13% high at Presidio, so further correction...
+                factor *= 1.193 / 1.248 * 1.0/1.13
+                lag_seconds += 35*60.
             else:
                 tide_gage="9415020" # Pt Reyes 
                 
