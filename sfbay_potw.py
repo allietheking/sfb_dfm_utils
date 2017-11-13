@@ -3,6 +3,7 @@ import numpy as np
 import xarray as xr
 from stompy import utils
 import stompy.model.delft.io as dio
+import six
 
 from . import dredge_grid
 
@@ -34,17 +35,17 @@ def add_sfbay_potw(run_base_dir,
                 site_s=site # py2
 
             if site_s in ['false_sac','false_sj']:
-                print("(skip %s) "%site_s,end="")
+                six.print_("(skip %s) "%site_s,end="")
                 continue
 
             if potw.utm_x.values.mean() > 610200:
                 # Delta POTWs are in this file, too, but not in this
                 # grid.  Luckily they are easy to identify based on
                 # x coordinate.
-                print("(skip %s -- too far east) "%site_s,end="")
+                six.print_("(skip %s -- too far east) "%site_s,end="")
                 continue
             
-            print("%s "%site_s,end="")
+            six.print_("%s "%site_s,end="")
 
             fp.write( ("QUANTITY=discharge_salinity_temperature_sorsin\n"
                        "FILENAME=%s.pli\n"
@@ -118,4 +119,4 @@ def add_sfbay_potw(run_base_dir,
                                                   0.0, # salinity
                                                   20.0)) # temperature...
 
-    print("Done with POTWs")
+    six.print_("Done with POTWs")
