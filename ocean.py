@@ -44,38 +44,41 @@ def add_ocean(run_base_dir,
     # get a few extra days of data to allow for transients in the low pass filter.
     pad_time=np.timedelta64(5,'D')
     
-    ptreyes_raw_fn=os.path.join(run_base_dir,'ptreyes-raw.nc')
     if 1:
-        if not os.path.exists(ptreyes_raw_fn):
-            if 1: 
-                log.warning("TEMPORARILY USING FORT POINT TIDES")
-                tide_gage="9414290" # Fort Point
-                # Fort Point mean tide range is 1.248m, vs. 1.193 at Point Reyes.
-                # apply rough correction to amplitude.
-                # S2 phase 316.2 at Pt Reyes, 336.2 for Ft. Point.
-                # 20 deg difference for a 12h tide, or 30 deg/hr, so
-                # that's a lag of 40 minutes.
-                # First go I got this backwards, and wound up with lags
-                # at Presidio and Alameda of 4600 and 4400s.  That was
-                # with lag_seconds -= 40*60.
-                # Also got amplitudes 13% high at Presidio, so further correction...
-                factor *= 1.193 / 1.248 * 1.0/1.13
-                lag_seconds += 35*60.
-            else:
-                tide_gage="9415020" # Pt Reyes 
-                
-            ptreyes_raw=noaa_coops.coops_dataset(tide_gage,
-                                                 run_start-pad_time,run_stop+pad_time,
-                                                 ["water_level","water_temperature"],
-                                                 days_per_request=30)
+        if 0: # This was temporary, while NOAA had an issue with their website. 
+            log.warning("TEMPORARILY USING FORT POINT TIDES")
+            tide_gage="9414290" # Fort Point
+        else:
+            tide_gage="9415020" # Pt Reyes 
 
-            ptreyes_raw.to_netcdf(ptreyes_raw_fn,engine='scipy')
+        tides_raw_fn=os.path.join(run_base_dir,'tides-%s-raw.nc'%tide_gage)
+        if not os.path.exists(tides_raw_fn):
+            tides_raw=noaa_coops.coops_dataset(tide_gage,
+                                               run_start-pad_time,run_stop+pad_time,
+                                               ["water_level","water_temperature"],
+                                               days_per_request=30)
+
+            tides_raw.to_netcdf(tides_raw_fn,engine='scipy')
+
+    # Fort Point mean tide range is 1.248m, vs. 1.193 at Point Reyes.
+    # apply rough correction to amplitude.
+    # S2 phase 316.2 at Pt Reyes, 336.2 for Ft. Point.
+    # 20 deg difference for a 12h tide, or 30 deg/hr, so
+    # that's a lag of 40 minutes.
+    # First go I got this backwards, and wound up with lags
+    # at Presidio and Alameda of 4600 and 4400s.  That was
+    # with lag_seconds -= 40*60.
+    # Also got amplitudes 13% high at Presidio, so further correction...
+    if tide_gage=="9414290":
+        # 
+        factor *= 1.193 / 1.248 * 1.0/1.13
+        lag_seconds += 35*60.
 
     if 1:
         # Clean that up, fabricate salinity
-        ptreyes=xr.open_dataset(ptreyes_raw_fn).isel(station=0)
+        tides=xr.open_dataset(tides_raw_fn).isel(station=0)
 
-        water_level=utils.fill_tidal_data(ptreyes.water_level)
+        water_level=utils.fill_tidal_data(tides.water_level)
 
         if 0: # FIR filter, has to be shorter to avoid attenuation
             # And lowpass at 1 hour to get rid of wave energy
@@ -98,17 +101,17 @@ def add_ocean(run_base_dir,
             if lag_seconds!=0.0:
                 # sign:  if lag_seconds is positive, then I want the result
                 # for time.values[0] to come from original data at time.valules[0]-lag_seconds
-                water_level[:] = np.interp( utils.to_dnum(ptreyes.time.values),
-                                            utils.to_dnum(ptreyes.time.values)-lag_seconds/86400.,
-                                            ptreyes.water_level.values )
+                water_level[:] = np.interp( utils.to_dnum(tides.time.values),
+                                            utils.to_dnum(tides.time.values)-lag_seconds/86400.,
+                                            tides.water_level.values )
             
-        if 'water_temperature' not in ptreyes:
+        if 'water_temperature' not in tides:
             log.warning("Water temperature was not found in NOAA data.  Will use constant 15")
-            water_temp=15+0*ptreyes.water_level
+            water_temp=15+0*tides.water_level
             water_temp.name='water_temperature'
         else:
-            fill_data(ptreyes.water_temperature)
-            water_temp=ptreyes.water_temperature
+            fill_data(tides.water_temperature)
+            water_temp=tides.water_temperature
                                              
         if all_flows_unit:
             print("-=-=-=- USING 35 PPT WHILE TESTING! -=-=-=-")
