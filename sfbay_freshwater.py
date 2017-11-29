@@ -24,6 +24,58 @@ def add_sfbay_freshwater(run_base_dir,
     grid: UnstructuredGrid instance to be modified at input locations
     old_bc_fn: path to old-style forcing input file
     """
+
+    def write_flow_data(stn_ds,src_name,flow_scale=1.0):
+        df=stn_ds.to_dataframe().reset_index()
+        df['elapsed_minutes']=(df.time.values - ref_date)/np.timedelta64(60,'s')
+        df['salinity']=0*df.flow_cms
+        df['temperature']=20+0*df.flow_cms
+
+        if all_flows_unit:
+            df['flow_cms']=1.0+0*df.flow_cms
+        else:
+            df['flow_cms'] = flow_scale * df.flow_cms
+
+        for quantity,suffix in [ ('dischargebnd','_flow'),
+                                 ('salinitybnd','_salt'),
+                                 ('temperaturebnd','_temp') ]:
+            lines=['QUANTITY=%s'%quantity,
+                   'FILENAME=%s%s.pli'%(src_name,suffix),
+                   'FILETYPE=9',
+                   'METHOD=3',
+                   'OPERAND=O',
+                   ""]
+            with open(old_bc_fn,'at') as fp:
+                fp.write("\n".join(lines))
+
+            # read the pli back to know how to name the per-node timeseries
+            feats=dio.read_pli(os.path.join(run_base_dir,
+                                            "%s%s.pli"%(src_name,suffix)))
+            feat=feats[0] # just one polyline in the file
+
+            if len(feat)==3:
+                node_names=feat[2]
+            else:
+                node_names=[""]*len(feat[1])
+
+            for node_idx,node_name in enumerate(node_names):
+                # if no node names are known, create the default name of <feature name>_0001
+                if not node_name:
+                    node_name="%s%s_%04d"%(src_name,suffix,1+node_idx)
+
+                tim_fn=os.path.join(run_base_dir,node_name+".tim")
+
+                columns=['elapsed_minutes']
+                if quantity=='dischargebnd':
+                    columns.append('flow_cms')
+                elif quantity=='salinitybnd':
+                    columns.append('salinity')
+                elif quantity=='temperaturebnd':
+                    columns.append('temperature')
+
+                df.to_csv(tim_fn, sep=' ', index=False, header=False, columns=columns)
+
+
     adjusted_features=dio.read_pli(adjusted_pli_fn)
     # Add the freshwater flows - could come from erddap, but use github submodule
     # for better control on version
@@ -38,6 +90,22 @@ def add_sfbay_freshwater(run_base_dir,
     sel=(full_flows_ds.time > run_start - 5*DAY) & (full_flows_ds.time < run_stop + 5*DAY)
     flows_ds = full_flows_ds.isel(time=sel)
 
+    if 1: # Special handling for Mowry Slough
+        mowry_feat=None
+        src_name="MOWRY"
+        for adj_feat in adjusted_features:
+            if adj_feat[0]==src_name:
+                mowry_feat=adj_feat
+
+                # Write copies for flow, salinity and temperatures
+                for suffix in ['_flow','_salt','_temp']:
+                    # function to add suffix
+                    feat_suffix=dio.add_suffix_to_feature(mowry_feat,suffix)
+                    pli_fn=os.path.join(run_base_dir,"%s%s.pli"%(src_name,suffix))
+                    dio.write_pli(pli_fn,[feat_suffix])
+
+                dredge_grid.dredge_boundary(grid,feat[1],dredge_depth)
+    
     for stni in range(len(flows_ds.station)):
         stn_ds=flows_ds.isel(station=stni)
 
@@ -66,50 +134,12 @@ def add_sfbay_freshwater(run_base_dir,
             dredge_grid.dredge_boundary(grid,feat[1],dredge_depth)
 
         if 1: #-- Write the time series and stanza in FlowFM_bnd.ext
-            df=stn_ds.to_dataframe().reset_index()
-            df['elapsed_minutes']=(df.time.values - ref_date)/np.timedelta64(60,'s')
-            df['salinity']=0*df.flow_cms
-            df['temperature']=20+0*df.flow_cms
-
-            if all_flows_unit:
-                df['flow_cms']=1.0+0*df.flow_cms
-                
-            for quantity,suffix in [ ('dischargebnd','_flow'),
-                                     ('salinitybnd','_salt'),
-                                     ('temperaturebnd','_temp') ]:
-                lines=['QUANTITY=%s'%quantity,
-                       'FILENAME=%s%s.pli'%(src_name,suffix),
-                       'FILETYPE=9',
-                       'METHOD=3',
-                       'OPERAND=O',
-                       ""]
-                with open(old_bc_fn,'at') as fp:
-                    fp.write("\n".join(lines))
-
-                # read the pli back to know how to name the per-node timeseries
-                feats=dio.read_pli(os.path.join(run_base_dir,
-                                                "%s%s.pli"%(src_name,suffix)))
-                feat=feats[0] # just one polyline in the file
-
-                if len(feat)==3:
-                    node_names=feat[2]
-                else:
-                    node_names=[""]*len(feat[1])
-                    
-                for node_idx,node_name in enumerate(node_names):
-                    # if no node names are known, create the default name of <feature name>_0001
-                    if not node_name:
-                        node_name="%s%s_%04d"%(src_name,suffix,1+node_idx)
-
-                    tim_fn=os.path.join(run_base_dir,node_name+".tim")
-                    
-                    columns=['elapsed_minutes']
-                    if quantity=='dischargebnd':
-                        columns.append('flow_cms')
-                    elif quantity=='salinitybnd':
-                        columns.append('salinity')
-                    elif quantity=='temperaturebnd':
-                        columns.append('temperature')
-                    
-                    df.to_csv(tim_fn, sep=' ', index=False, header=False, columns=columns)
-
+            if src_name=="EBAYS" and mowry_feat is not None:
+                write_flow_data(stn_ds,src_name)
+                # EBAYS watershed is something like 13000 acres.
+                # don't worry about scaling back EBAYS, but add in some extra
+                # here for MOWRY
+                write_flow_data(stn_ds,"MOWRY",flow_scale=12.8/13000)
+            else:
+                write_flow_data(stn_ds,src_name)
+    
