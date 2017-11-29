@@ -26,12 +26,15 @@ def add_ocean(run_base_dir,
               all_flows_unit=False):
     """
     Ocean:
+    original from Silvia Pubben:
     Water level data from station 46214 (apparently from Yi Chao's ROMS?)
       no spatial variation
-    Maybe salinity from Yi Chao ROMS?  That's what the thesis says, but the
-    actual inputs look like constant 33
+    Some runs had salinity from Yi Chao ROMS based on documentation in
+    thesis says.  Inputs in the model configuration we received 
+    had a constant 33ppt salinity BC.
 
-    Ocean BCs from Point Reyes
+    SFB_DFM_v2: Ocean BCs from Point Reyes for tides, temperature.  Salinity is
+    constant.
     """
     # get a few extra days of data to allow for transients in the low pass filter.
     pad_time=np.timedelta64(5,'D')

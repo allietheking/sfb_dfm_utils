@@ -38,13 +38,15 @@ def add_delta_inflow(run_base_dir,
     old_bc_fn: path to old-style boundary forcing file
     all_flows_unit: if True, override all flows to be 1 m3 s-1 for model diagnostics
     """
+
+    pad=np.timedelta64(3,'D')
     
     if 1: 
         # Cache the original data from USGS, then clean it and write to DFM format
         jersey_raw_fn=os.path.join(run_base_dir,'jersey-raw.nc')
         if not os.path.exists(jersey_raw_fn):
             jersey_raw=usgs_nwis.nwis_dataset(station="11337190",
-                                              start_date=run_start,end_date=run_stop,
+                                              start_date=run_start-pad,end_date=run_stop+pad,
                                               products=[60, # "Discharge, cubic feet per second"
                                                         10], # "Temperature, water, degrees Celsius"
                                               days_per_request=30)
@@ -53,12 +55,11 @@ def add_delta_inflow(run_base_dir,
         rio_vista_raw_fn=os.path.join(run_base_dir,'rio_vista-raw.nc')
         if not os.path.exists(rio_vista_raw_fn):
             rio_vista_raw=usgs_nwis.nwis_dataset(station="11455420",
-                                                 start_date=run_start,end_date=run_stop,
+                                                 start_date=run_start-pad,end_date=run_stop+pad,
                                                  products=[60, # "Discharge, cubic feet per second"
                                                            10], # "Temperature, water, degrees Celsius"
                                                  days_per_request=30)
             rio_vista_raw.to_netcdf(rio_vista_raw_fn,engine='scipy')
-
 
 
     if 1: # Clean and write it all out
