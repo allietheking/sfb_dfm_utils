@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
 
+from stompy.spatial import interp_4d
+
 from stompy.grid import unstructured_grid
 from stompy.model.delft import dfm_grid
 from stompy.spatial import wkb2shp
@@ -120,8 +122,10 @@ def initial_salinity_dyn(run_base_dir,
                          parse_dates=['Datetime'])
         sfei_salt=sfei['S_PSU']
         valid=~(sfei_salt.isnull())
-        sfei_salt_now=np.interp(utils.to_dnum(run_start),
-                                utils.to_dnum(sfei.Datetime[valid]),sfei_salt[valid])
+        # limit to data within 20 days of the request
+        sfei_salt_now=utils.interp_near(utils.to_dnum(run_start),
+                                        utils.to_dnum(sfei.Datetime[valid]),sfei_salt[valid],
+                                        max_dx=20.0)
         geom=obs_shp['geom'][ np.nonzero(obs_shp['name']==name)[0][0] ]
         xy=np.array(geom)
         if np.isfinite(sfei_salt_now):
@@ -130,42 +134,28 @@ def initial_salinity_dyn(run_base_dir,
 
     ##
 
-    xy=np.array(mooring_xy)
-
-    sfei_init_salt=np.c_[xy[:,0],xy[:,1],mooring_salt]
-
+    if len(mooring_xy):
+        xy=np.array(mooring_xy)
+        sfei_init_salt=np.c_[xy[:,0],xy[:,1],mooring_salt]
+        init_salt=np.concatenate( (usgs_init_salt,
+                                   sfei_init_salt) )
+    else:
+        init_salt=usgs_init_salt
     ##
 
-    init_salt=np.concatenate( (usgs_init_salt,
-                               sfei_init_salt) )
+    # try again, but with the interp_4d code:
+    samples=pd.DataFrame()
+    samples['x']=init_salt[:,0]
+    samples['y']=init_salt[:,1]
+    samples['value']=init_salt[:,2]
+    # doesn't really matter
+    samples['weight']=1e3*np.ones_like(init_salt[:,0])
 
-    ##
-
-
-    differ=unstructured_diffuser.Diffuser(grid=g)
-
-    ##
-
-    for x,y,salt in init_salt:
-        try:
-            differ.set_dirichlet(salt,xy=[x,y],on_duplicate='skip')
-        except differ.PointOutsideDomain as exc:
-            print(exc)
-            continue
-
-    ##
-    differ.construct_linear_system()
-    differ.solve_linear_system(animate=False)
-
-    ##
+    salt=interp_4d.weighted_grid_extrapolation(g,samples,alpha=5e-4)
 
     cc=g.cells_centroid()
 
-    ##
-
-    cc_salt=np.concatenate( ( cc, differ.C_solved[:,None] ),axis=1 )
-
-    ##
+    cc_salt=np.concatenate( ( cc, salt[:,None] ),axis=1 )
 
     # Because DFM is going to use some interpolation, and will not reach outside
     # the convex hull, we have to be extra cautious and throw some points out farther

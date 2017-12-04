@@ -80,16 +80,11 @@ def add_ocean(run_base_dir,
 
         water_level=utils.fill_tidal_data(tides.water_level)
 
-        if 0: # FIR filter, has to be shorter to avoid attenuation
-            # And lowpass at 1 hour to get rid of wave energy
-            # with the fir filter, that's about a 2% amplitude loss at 6h.
-            winsize_lp=int( np.timedelta64(2,'h') / np.median(np.diff(water_level[:].time)) ) 
-            water_level[:] = filters.lowpass_fir(water_level[:].values,winsize_lp)
-        else: # IIR butterworth.  Nicer, with minor artifacts at ends
-            # 3 hours, defaults to 4th order.
-            water_level[:] = filters.lowpass(water_level[:].values,
-                                             utils.to_dnum(water_level.time),
-                                             cutoff=3./24)
+        # IIR butterworth.  Nicer than FIR, with minor artifacts at ends
+        # 3 hours, defaults to 4th order.
+        water_level[:] = filters.lowpass(water_level[:].values,
+                                         utils.to_dnum(water_level.time),
+                                         cutoff=3./24)
 
         if 1: # apply factor:
             msl= 2.152 - 1.214 # MSL(m) - NAVD88(m) for Point Reyes
@@ -101,9 +96,13 @@ def add_ocean(run_base_dir,
             if lag_seconds!=0.0:
                 # sign:  if lag_seconds is positive, then I want the result
                 # for time.values[0] to come from original data at time.valules[0]-lag_seconds
-                water_level[:] = np.interp( utils.to_dnum(tides.time.values),
-                                            utils.to_dnum(tides.time.values)-lag_seconds/86400.,
-                                            tides.water_level.values )
+                if 0: # Why interpolate here? Just alter the timebase.
+                    water_level[:] = np.interp( utils.to_dnum(tides.time.values),
+                                                utils.to_dnum(tides.time.values)-lag_seconds/86400.,
+                                                tides.water_level.values )
+                else:
+                    # Adjust time base directly.
+                    water_level.time.values[:] = water_level.time.values + np.timedelta64(lag_seconds,'s')
             
         if 'water_temperature' not in tides:
             log.warning("Water temperature was not found in NOAA data.  Will use constant 15")

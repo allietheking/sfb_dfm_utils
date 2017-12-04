@@ -6,3 +6,4 @@ from .initial_salinity import *
 from .ocean import *
 from .sfbay_freshwater import *
 from .sfbay_potw import *
+from .precip_evap import *
