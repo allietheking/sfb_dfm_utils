@@ -119,7 +119,7 @@ def initial_salinity_dyn(run_base_dir,
     for name,l2_file in sfei_moorings:
         print(name)
         sfei=pd.read_csv(os.path.join(L2_dir,l2_file),
-                         parse_dates=['Datetime'])
+                         parse_dates=['Datetime','dt'],low_memory=False)
         sfei_salt=sfei['S_PSU']
         valid=~(sfei_salt.isnull())
         # limit to data within 20 days of the request
@@ -148,11 +148,26 @@ def initial_salinity_dyn(run_base_dir,
     samples['x']=init_salt[:,0]
     samples['y']=init_salt[:,1]
     samples['value']=init_salt[:,2]
-    # doesn't really matter
-    samples['weight']=1e3*np.ones_like(init_salt[:,0])
+    # doesn't really matter, though should be kept in check with alpha
+    # and K_j
+    samples['weight']=1e6*np.ones_like(init_salt[:,0])
 
-    salt=interp_4d.weighted_grid_extrapolation(g,samples,alpha=5e-4)
+    # alpha=2e-5 is too sharp
+    # 5e-6 still too sharp
+    # Not sure why higher values looked fine when running this directly,
+    # but when it's part of the sfb_dfm.py script it needs really low
+    # values of alpha.
+    salt=interp_4d.weighted_grid_extrapolation(g,samples,alpha=3e-7)
 
+    # If these fail, the extrapolation approach may be running into
+    # numerical difficulties, often made worse by an alpha which is too
+    # large (which might be attempting to do less smoothing).
+    # decreasing alpha (which results in a smoother field) may help.
+    assert np.all( np.isfinite(salt) )
+    assert salt.max() < 40
+    assert salt.min() > -1 # allow a bit of slop
+
+    # use centroids as they are more predictable
     cc=g.cells_centroid()
 
     cc_salt=np.concatenate( ( cc, salt[:,None] ),axis=1 )
