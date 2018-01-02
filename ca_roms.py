@@ -85,6 +85,9 @@ def extract_roms_subgrid(ul_xy=(358815., 4327282.),
     grid
     projects to UTM, trims dry cells (based on ROMS data).
     cleans up the numbering and returns that grid, without bathymetry
+
+    cells['lati'] and ['loni'] had been indexes to just the subset of the ROMS 
+    grid.  Those are now indexes into the original roms grid.
     """
 
     snap_fns=glob.glob(os.path.join(cache_path,'*.nc'))
@@ -103,6 +106,9 @@ def extract_roms_subgrid(ul_xy=(358815., 4327282.),
 
     lat_sel=(ds0.lat.values>=lat_range[0]) & (ds0.lat.values<=lat_range[1])
     lon_sel=(ds0.lon.values>=(lon_range[0]%360)) & (ds0.lon.values<=(lon_range[1]%360))
+    # starting indices 
+    lat0i=np.nonzero(lat_sel)[0][0]
+    lon0i=np.nonzero(lon_sel)[0][0]
     ds0_sub=ds0.isel( lat=lat_sel, lon=lon_sel )
 
     Lat,Lon=np.meshgrid( ds0_sub.lat.values, ds0_sub.lon.values)
@@ -135,8 +141,9 @@ def extract_roms_subgrid(ul_xy=(358815., 4327282.),
     for lati,lat in enumerate(ds0_sub.lat.values):
         for loni,lon in enumerate(ds0_sub.lon.values):
             celli=mappings['cells'][loni,lati]
-            cell_lati[celli]=lati
-            cell_loni[celli]=loni
+            # These are now referenced to the full ROMS grid
+            cell_lati[celli]=lati + lat0i
+            cell_loni[celli]=loni + lon0i
             if dry[lati,loni]:
                 cell_values[ celli ] = 1.0
 
