@@ -165,6 +165,25 @@ def extract_roms_subgrid(ul_xy=(358815., 4327282.),
     g.renumber()
     return g
 
+def extract_roms_subgrid_poly(poly):
+    """
+    Extract a ROMS subgrid based on a polygon (in UTM coordinates)
+    """
+    # Start with an oversized, rectangular grid:
+    g=extract_roms_subgrid( ul_xy=(poly.bounds[0],poly.bounds[3]),
+                            lr_xy=(poly.bounds[2],poly.bounds[1]))
+    # Then trim the fat:
+    to_delete=~g.select_cells_intersecting(poly)
+    for c in np.nonzero(to_delete)[0]:
+        g.delete_cell(c)
+
+    # And clean up
+    g.renumber_cells()
+    g.make_edges_from_cells()
+    g.delete_orphan_nodes()
+    g.renumber()
+    return g
+
 # 6k cells.  Not bad.
 @memoize.memoize()
 def coastal_dem():
@@ -287,8 +306,64 @@ def annotate_grid_from_data(g,start,stop):
     g.add_edge_field('src_idx_in',edge_src_idx_in)
     g.add_edge_field('bc_norm_in',edge_norm_in)
     
-    
 
-# g.write_ugrid('matched_grid_v00.nc',overwrite=True)
-# dfm_grid.write_dfm(g,'matched_grid_v00_net.nc',overwrite=True)
+def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc'):
+    """
+    copy the strucutre of the map_file at one time step, but overwrite
+    fields with ROMS snapshot data
+    """
+    map_in=xr.open_dataset(map_file)
 
+    map_out=map_in.isel(time=[0])
+    # there are some name clashes -- drop any coordinates attributes
+
+    ## 
+    for dv in map_out.data_vars:
+        if 'coordinates' in map_out[dv].attrs:
+            del map_out[dv].attrs['coordinates']
+
+
+    ##
+    # Overwrite salinity with data from ROMS:
+
+    # DFM reorders the cells, so read it back in.
+    g_map=dfm_grid.DFMGrid(map_out)
+    g_map_cc=g_map.cells_centroid()
+    g_map_ll=utm2ll(g_map_cc)
+
+    ## 
+    dlon=np.median(np.diff(snap.lon.values))
+    dlat=np.median(np.diff(snap.lat.values))
+    for c in g_map.valid_cell_iter():
+        if c%1000==0:
+            print("%d/%d"%(c,g_map.Ncells()))
+        loni=utils.nearest(snap.lon.values%360,g_map_ll[c,0]%360)
+        lati=utils.nearest(snap.lat.values,g_map_ll[c,1])
+        lon_err=(snap.lon.values[loni]%360 - g_map_ll[c,0]%360.0)/dlon
+        lat_err=(snap.lat.values[lati] - g_map_ll[c,1])/dlat
+
+        if abs(lon_err) > 1 or abs(lat_err)>1:
+            print("skip cell %d"%c)
+            continue
+
+        roms_salt=snap.salt.isel(lat=lati,lon=loni,time=0).values[::-1]
+        roms_z=-snap.depth.values[::-1]
+        valid=np.isfinite(roms_salt)
+        roms_salt=roms_salt[valid]
+        roms_z=roms_z[valid]
+
+        bl=map_out.FlowElem_bl.isel(nFlowElem=c).values # positive up from the z datum
+        wd=map_out.waterdepth.isel(nFlowElem=c,time=0).values
+        sigma=map_out.LayCoord_cc.values
+        dfm_z=bl + wd*sigma
+
+        dfm_salt=np.interp(dfm_z,roms_z,roms_salt)
+        sel_time=xr.DataArray([0],dims=['time'])
+        sel_cell=xr.DataArray([c],dims=['nFlowElem'])
+        map_out.sa1[sel_time,sel_cell]=dfm_salt
+
+
+    # Does the map timestamp have to match what's in the mdu?
+    # Yes.
+    map_out.to_netcdf(output_fn,format='NETCDF3_64BIT')
+    return map_out
