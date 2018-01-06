@@ -20,8 +20,12 @@ from stompy import utils, memoize
 from stompy.grid import unstructured_grid
 from stompy.spatial import wkb2shp
 from stompy.plot import plot_utils, plot_wkb
-from stompy.spatial import proj_utils, wkb2shp,field
+from stompy.spatial import proj_utils, wkb2shp,field, linestring_utils
 from stompy.model.delft import dfm_grid
+
+from shapely import geometry
+from shapely.ops import cascaded_union
+
 
 cache_path = os.path.join(local_config.cache_path,'ca_roms')
 
@@ -236,7 +240,16 @@ def add_coastal_bathy(g,dem=None):
 
     return g
 
-def annotate_grid_from_data(g,start,stop):
+def annotate_grid_from_data(g,start,stop,candidate_edges=None):
+    """
+    Add src_idx_in,src_idx_out fields to edges for ROMS-adjacent boundary 
+    edges.
+
+    g: unstructured_grid to be annotated
+    start,stop: datetime64 date range, for selecting wet cells from ROMS
+    candidate_edges: if specified, only consider these edges, an array
+      of edge indices
+    """
     # Get the list of files
     ca_roms_files=fetch_ca_roms(start,stop)
     
@@ -268,8 +281,11 @@ def annotate_grid_from_data(g,start,stop):
     edge_ctr=g.edges_center()
 
     src=xr.open_dataset(ca_roms_files[0])
+
+    if candidate_edges is None:
+        candidate_edges=np.arange(g.Nedges())
     
-    for j in range(g.Nedges()):
+    for j in candidate_edges: # range(g.Nedges()):
         if j%1000==0:
             logger.info("%d/%d"%(j,N))
         c1,c2=g.edges['cells'][j]
@@ -302,9 +318,9 @@ def annotate_grid_from_data(g,start,stop):
 
         edge_norm_in[j,:] = utils.to_unit( centroid[cin] - cout_cc )
 
-    g.add_edge_field('src_idx_out',edge_src_idx_out)
-    g.add_edge_field('src_idx_in',edge_src_idx_in)
-    g.add_edge_field('bc_norm_in',edge_norm_in)
+    g.add_edge_field('src_idx_out',edge_src_idx_out,on_exists='overwrite')
+    g.add_edge_field('src_idx_in',edge_src_idx_in,on_exists='overwrite')
+    g.add_edge_field('bc_norm_in',edge_norm_in,on_exists='overwrite')
     
 
 def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc'):
@@ -367,3 +383,49 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc'):
     # Yes.
     map_out.to_netcdf(output_fn,format='NETCDF3_64BIT')
     return map_out
+
+# Not exactly ROMS-specific, but helps with using ROMS coupling
+def add_sponge_layer(mdu,run_base_dir,grid,edges,sponge_visc,background_visc,sponge_L):
+    obc_centers=grid.edges_center()[edges]
+
+    sponge_L=25000 # [m] roughly 8 cells
+
+    sample_sets=[ np.c_[obc_centers[:,0],obc_centers[:,1],sponge_visc*np.ones(len(obc_centers))] ]
+
+    circs=[geometry.Point(xy).buffer(sponge_L)
+           for xy in obc_centers]
+    obc_buff=cascaded_union(circs).boundary
+    obc_buff_pnts=np.array(obc_buff)
+    obc_buff_pnts_resamp=linestring_utils.downsample_linearring(obc_buff_pnts,sponge_L*0.5)
+
+    sample_sets.append( np.c_[obc_buff_pnts_resamp[:,0],
+                              obc_buff_pnts_resamp[:,1],
+                              background_visc*np.ones(len(obc_buff_pnts_resamp))] )
+
+    # And some far flung values
+    x0,x1,y0,y1=grid.bounds()
+    corners=np.array( [[x0-sponge_L,y0-sponge_L],
+                       [x0-sponge_L,y1+sponge_L],
+                       [x1+sponge_L,y1+sponge_L],
+                       [x1+sponge_L,y0-sponge_L]] )
+
+    sample_sets.append( np.c_[corners[:,0],
+                              corners[:,1],
+                              background_visc*np.ones(len(corners))] )
+
+    visc_samples=np.concatenate(sample_sets,axis=0)
+
+    np.savetxt(os.path.join(run_base_dir,'viscosity.xyz'),
+               visc_samples)
+
+    txt="\n".join(["QUANTITY=horizontaleddyviscositycoefficient",
+                   "FILENAME=viscosity.xyz",
+                   "FILETYPE=7",
+                   "METHOD=4",
+                   "OPERAND=O"
+                   "\n"])
+    
+    old_bc_fn = os.path.join(run_base_dir,mdu['external forcing','ExtForceFile'])
+    with open(old_bc_fn,'at') as fp:
+        fp.write(txt)
+        
