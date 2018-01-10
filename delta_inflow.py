@@ -21,7 +21,8 @@ def add_delta_inflow(run_base_dir,
                      static_dir,
                      grid,dredge_depth,
                      old_bc_fn,
-                     all_flows_unit=False):
+                     all_flows_unit=False,
+                     time_offset=None):
     """
     Fetch river USGS river flows, add to FlowFM_bnd.ext:
     Per Silvia's Thesis:
@@ -33,12 +34,19 @@ def add_delta_inflow(run_base_dir,
 
     run_base_dir: location of the DFM inputs
     run_start,run_stop: target period for therun
-    statiC_dir: path to static assets, specifically Jersey.pli and RioVista.pli
+    static_dir: path to static assets, specifically Jersey.pli and RioVista.pli
     grid: UnstructuredGrid instance, to be modified at inflow locations
     old_bc_fn: path to old-style boundary forcing file
     all_flows_unit: if True, override all flows to be 1 m3 s-1 for model diagnostics
+    
+    time_offset: pull data from a shifted timeframe.  np.timedelta64(-365,'D') will
+    pull data from a year earlier than the run.
     """
-
+    if time_offset is not None:
+        run_start = run_start + time_offset
+        run_stop = run_stop + time_offset
+        ref_date = ref_date + time_offset
+    
     pad=np.timedelta64(3,'D')
     
     if 1: 

@@ -15,7 +15,17 @@ def add_sfbay_potw(run_base_dir,
                    adjusted_pli_fn,
                    grid,dredge_depth,
                    old_bc_fn,
-                   all_flows_unit=False):
+                   all_flows_unit=False,
+                   time_offset=None):
+    """
+    time_offset: shift all dates by the given offset.  To run 2016 
+    with data from 2015, specify np.timedelta64(-365,'D')
+    """
+    if time_offset is not None:
+        run_start = run_start + time_offset
+        run_stop = run_stop + time_offset
+        ref_date = ref_date + time_offset
+        
     potws=xr.open_dataset(os.path.join(potw_dir,'outputs','sfbay_delta_potw.nc'))
     adjusted_features=dio.read_pli(adjusted_pli_fn)
 
