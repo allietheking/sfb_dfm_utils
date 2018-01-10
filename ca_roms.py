@@ -323,23 +323,33 @@ def annotate_grid_from_data(g,start,stop,candidate_edges=None):
     g.add_edge_field('bc_norm_in',edge_norm_in,on_exists='overwrite')
     
 
-def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc'):
+def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
+                           missing=0,tol_km=10):
     """
-    copy the strucutre of the map_file at one time step, but overwrite
+    copy the structure of the map_file at one time step, but overwrite
     fields with ROMS snapshot data
+
+    snap: A ROMS output file, loaded as xr.Dataset
+    map_file: path to map output, must be single processor run.
+    output_fn: If specified, the updated map file is written to the given path.
+    
+    missing: for locations in the map file which are missing or unmatched in the ROMS
+    file, set scalars to this value.  If set to None, leave those water columns
+    as is in the map file.
+
+    tol_km: if the best ROMS match is farther away than this, set it to missing
+
+    returns a Dataset() of the updated map
     """
     map_in=xr.open_dataset(map_file)
 
     map_out=map_in.isel(time=[0])
     # there are some name clashes -- drop any coordinates attributes
-
-    ## 
+    #
     for dv in map_out.data_vars:
         if 'coordinates' in map_out[dv].attrs:
             del map_out[dv].attrs['coordinates']
 
-
-    ##
     # Overwrite salinity with data from ROMS:
 
     # DFM reorders the cells, so read it back in.
@@ -350,38 +360,102 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc'):
     ## 
     dlon=np.median(np.diff(snap.lon.values))
     dlat=np.median(np.diff(snap.lat.values))
+
+    roms_z=-snap.depth.values[::-1]
+
+    snap0=snap.isel(time=0)
+    # make the dimension order explicit so we can safely index
+    # this via numpy below
+    wet=np.isfinite(snap0.zeta.transpose('lat','lon').values)
+    snap_salt=snap0.salt.transpose('lat','lon','depth').values
+    
+    snap_lon=snap0.lon.values
+    snap_lat=snap0.lat.values
+
+    sel_time=xr.DataArray([0],dims=['time'])
+    sel_cell=xr.DataArray([1000000],dims=['nFlowElem'])
+
+    all_bl=map_out.FlowElem_bl.values
+    all_wd=map_out.waterdepth.isel(time=0).values
+    # This only works for uniform sigma values - spatially variable or
+    # z-levels would require other code
+    sigma=map_out.LayCoord_cc.values
+    assert sigma.ndim==1
+    
+    def get_dfm_z(c):
+        # This way is nice but very slow:
+        # bl=map_out.FlowElem_bl.isel(nFlowElem=c).values # positive up from the z datum
+        # wd=map_out.waterdepth.isel(nFlowElem=c,time=0).values
+        # sigma=map_out.LayCoord_cc.values
+        bl=all_bl[c]
+        wd=all_wd[c]
+
+        return bl + wd*sigma
+    
+    # much faster to write straight to numpy array rather than
+    # via xarray.  But for a bit more robustness, hack together
+    # dynamic indexing
+    dest_salt=map_out.sa1.values
+    dest_idx=[]
+    for dimi,dim in enumerate(map_out.sa1.dims):
+        if dim=='time':
+            dest_idx.append(0)
+        elif dim=='laydim':
+            dest_idx.append(slice(None))
+        else:
+            dest_idx_cell=dimi
+            dest_idx.append(100000)
+            
     for c in g_map.valid_cell_iter():
         if c%1000==0:
             print("%d/%d"%(c,g_map.Ncells()))
-        loni=utils.nearest(snap.lon.values%360,g_map_ll[c,0]%360)
-        lati=utils.nearest(snap.lat.values,g_map_ll[c,1])
-        lon_err=(snap.lon.values[loni]%360 - g_map_ll[c,0]%360.0)/dlon
-        lat_err=(snap.lat.values[lati] - g_map_ll[c,1])/dlat
+        is_missing=False
+        
+        loni=utils.nearest(snap_lon%360,g_map_ll[c,0]%360)
+        lati=utils.nearest(snap_lat,g_map_ll[c,1])
+        
+        err_km=utils.haversine([snap_lon[loni],snap_lat[lati]],
+                               g_map_ll[c,:])
+        
+        if err_km>tol_km:
+            is_missing=True
+        elif not bool(wet[lati,loni]):
+            is_missing=True
+        else:
+            # grab a water column, and flip it vertically to be
+            # in order of increasing, positive-up, depth, i.e.
+            # bed to surface.
+            # xarray = slow
+            #roms_salt=snap0.salt.isel(lat=lati,lon=loni).values[::-1]
+            # numpy = fast
+            roms_salt=snap_salt[lati,loni,::-1]
+            
+            valid=np.isfinite(roms_salt)
+            if not np.any(valid):
+                is_missing=True 
+            else:
+                dfm_z=get_dfm_z(c)
+                
+                dfm_salt=np.interp(dfm_z,
+                                   roms_z[valid],roms_salt[valid])
 
-        if abs(lon_err) > 1 or abs(lat_err)>1:
-            print("skip cell %d"%c)
-            continue
-
-        roms_salt=snap.salt.isel(lat=lati,lon=loni,time=0).values[::-1]
-        roms_z=-snap.depth.values[::-1]
-        valid=np.isfinite(roms_salt)
-        roms_salt=roms_salt[valid]
-        roms_z=roms_z[valid]
-
-        bl=map_out.FlowElem_bl.isel(nFlowElem=c).values # positive up from the z datum
-        wd=map_out.waterdepth.isel(nFlowElem=c,time=0).values
-        sigma=map_out.LayCoord_cc.values
-        dfm_z=bl + wd*sigma
-
-        dfm_salt=np.interp(dfm_z,roms_z,roms_salt)
-        sel_time=xr.DataArray([0],dims=['time'])
-        sel_cell=xr.DataArray([c],dims=['nFlowElem'])
-        map_out.sa1[sel_time,sel_cell]=dfm_salt
-
-
+        dest_idx[dest_idx_cell]=c
+        if is_missing:
+            if missing is None:
+                continue
+            else:
+                dest_salt[dest_idx]=missing
+        else:
+            dest_salt[dest_idx]=dfm_salt
+        
+    map_out.sa1.values[:,:,:]=dest_salt # a little dicey
+    # that was legal, and took, right?
+    assert np.allclose( map_out.sa1.values, dest_salt )
+    
     # Does the map timestamp have to match what's in the mdu?
     # Yes.
-    map_out.to_netcdf(output_fn,format='NETCDF3_64BIT')
+    if output_fn is not None:
+        map_out.to_netcdf(output_fn,format='NETCDF3_64BIT')
     return map_out
 
 # Not exactly ROMS-specific, but helps with using ROMS coupling
