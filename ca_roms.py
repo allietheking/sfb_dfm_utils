@@ -341,6 +341,9 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
 
     returns a Dataset() of the updated map
     """
+    dest_fields=['sa1','tem1'] # names of the fields to write to in the map file
+    roms_fields=['salt','temp'] # source fields in the ROMS data
+
     map_in=xr.open_dataset(map_file)
 
     map_out=map_in.isel(time=[0])
@@ -349,8 +352,6 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
     for dv in map_out.data_vars:
         if 'coordinates' in map_out[dv].attrs:
             del map_out[dv].attrs['coordinates']
-
-    # Overwrite salinity with data from ROMS:
 
     # DFM reorders the cells, so read it back in.
     g_map=dfm_grid.DFMGrid(map_out)
@@ -367,7 +368,9 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
     # make the dimension order explicit so we can safely index
     # this via numpy below
     wet=np.isfinite(snap0.zeta.transpose('lat','lon').values)
-    snap_salt=snap0.salt.transpose('lat','lon','depth').values
+    snap_scalars=[snap0[roms_field].transpose('lat','lon','depth').values
+                  for roms_field in roms_fields]
+    #snap_salt=snap0.salt.transpose('lat','lon','depth').values
     
     snap_lon=snap0.lon.values
     snap_lat=snap0.lat.values
@@ -395,7 +398,10 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
     # much faster to write straight to numpy array rather than
     # via xarray.  But for a bit more robustness, hack together
     # dynamic indexing
-    dest_salt=map_out.sa1.values
+
+    dest_arrays=[map_out[fld].values
+                 for fld in dest_fields]
+    # dest_salt=map_out.sa1.values
     dest_idx=[]
     for dimi,dim in enumerate(map_out.sa1.dims):
         if dim=='time':
@@ -426,31 +432,43 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
             # in order of increasing, positive-up, depth, i.e.
             # bed to surface.
             # xarray = slow
-            #roms_salt=snap0.salt.isel(lat=lati,lon=loni).values[::-1]
+            #   roms_salt=snap0.salt.isel(lat=lati,lon=loni).values[::-1]
             # numpy = fast
-            roms_salt=snap_salt[lati,loni,::-1]
-            
-            valid=np.isfinite(roms_salt)
+            roms_scalars=[ snap_scalar[lati,loni,::-1]
+                           for snap_scalar in snap_scalars]
+            # roms_salt=snap_salt[lati,loni,::-1]
+
+            #valid=np.isfinite(roms_salt)
+            # Assume that if the first (salt) is valid, then so are the rest (temperature)
+            valid=np.isfinite(roms_scalars[0])
             if not np.any(valid):
                 is_missing=True 
             else:
                 dfm_z=get_dfm_z(c)
-                
-                dfm_salt=np.interp(dfm_z,
-                                   roms_z[valid],roms_salt[valid])
+
+                dfm_scalars=[ np.interp(dfm_z,roms_z[valid],roms_scalar[valid])
+                              for roms_scalar in roms_scalars ]
+                #dfm_salt=np.interp(dfm_z,
+                #                   roms_z[valid],roms_salt[valid])
 
         dest_idx[dest_idx_cell]=c
         if is_missing:
             if missing is None:
                 continue
             else:
-                dest_salt[dest_idx]=missing
+                for dest in dest_arrays:
+                    dest[dest_idx]=missing
+                # dest_salt[dest_idx]=missing
         else:
-            dest_salt[dest_idx]=dfm_salt
-        
-    map_out.sa1.values[:,:,:]=dest_salt # a little dicey
-    # that was legal, and took, right?
-    assert np.allclose( map_out.sa1.values, dest_salt )
+            #dest_salt[dest_idx]=dfm_salt
+            for dest,dfm_scalar in zip(dest_arrays,dfm_scalars):
+                dest[dest_idx]=dfm_scalar
+
+    #map_out.sa1.values[:,:,:]=dest_salt # a little dicey
+    for dest_field,dest in zip(dest_fields,dest_arrays):
+        map_out[dest_field].values[:,:,:]=dest # a little dicey        
+    # that was legal, and took, right? check the first one
+    assert np.allclose( map_out.sa1.values, dest_arrays[0] )
     
     # Does the map timestamp have to match what's in the mdu?
     # Yes.

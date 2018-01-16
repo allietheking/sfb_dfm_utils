@@ -93,13 +93,16 @@ def samples_to_cells(init_salt,g):
     return cc_salt
 
 
-def samples_from_usgs(run_start):
+def samples_from_usgs(run_start,field='salinity'):
     """
     Pull some USGS transect data and return a set of 2D salinity
     samples appropriate for the given date.
     Caveats: This is currently using ERDDAP behind the scenes, which
     does not have the most recent data.  It will use a prior year
     if the date cannot be matched within 30 days.
+
+    field: name of the field to pull from usgs_crusies.
+       'salinity','temperature'
     """
     # This copy of the USGS data ends early:
     usgs_data_end=np.datetime64('2016-04-28')
@@ -115,17 +118,17 @@ def samples_from_usgs(run_start):
                                            usgs_target + usgs_pad )
 
     # lame filling
-    salt3d=usgs_cruises['salinity']
-    salt2d=salt3d.mean(dim='prof_sample')
-    assert salt2d.dims[0]=='date'
-    salt2d_fill=utils.fill_invalid(salt2d.values,axis=0)
+    scal3d=usgs_cruises[field]
+    scal2d=scal3d.mean(dim='prof_sample')
+    assert scal2d.dims[0]=='date'
+    scal2d_fill=utils.fill_invalid(scal2d.values,axis=0)
 
-    salt_f=interp1d(utils.to_dnum(salt2d.date.values),
-                    salt2d_fill,
+    scal_f=interp1d(utils.to_dnum(scal2d.date.values),
+                    scal2d_fill,
                     axis=0,bounds_error=False)(utils.to_dnum(usgs_target))
 
-    usgs_init_salt=np.c_[salt2d.x.values,salt2d.y.values,salt_f]
-    return usgs_init_salt
+    usgs_init_scal=np.c_[scal2d.x.values,scal2d.y.values,scal_f]
+    return usgs_init_scal
 
 def samples_from_sfei_moorings(run_start):
     """
