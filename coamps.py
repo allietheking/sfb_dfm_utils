@@ -1,7 +1,9 @@
 # Interface for adding COAMPS wind to a DFM run
 import os
+import re
 import time
 import requests
+import datetime
 
 import numpy as np
 
@@ -29,51 +31,89 @@ assert os.path.exists(cache_path)
 #                                         |     |  |     |          |    elevation
 # US058GMET-GR1dyn.COAMPS-CENCOOS_CENCOOS-n3-c1_00000F0NL2017081600_0100_002000-000000wnd_utru    
 
+missing_files= [ 'cencoos_4km/2017/2017091612/',
+                 'cencoos_4km/2017/2017091700/']
+
+def known_missing(recs):
+    """
+    There are some skipped dates in the COAMPS data online.  This checks
+    a download URL against a list of known missing files, returning true
+    if the URL is expected to be missing.
+    """
+    # Get a representative URL
+    url=list(recs.values())[0]['url']
+    for patt in missing_files:
+        if re.search(patt,url):
+            return True
+    return False
 
 def coamps_files(start,stop):
     """ 
     Generate urls, filenames, and dates for
     fetching or reading COAMPS data
+
+    Tries to pull the first 12 hours of runs, but if a run is known to be missing,
+    will pull later hours of an older run.
     
     returns a generator, which yields for each time step of coamps output
     {'wnd_utru':{'url=..., local=..., timestamp=...}, ...}
+
     """
     dataset_name="cencoos_4km"
     # round to days
     start=start.astype('M8[D]')
     stop=stop.astype('M8[D]') + np.timedelta64(1,'D')
 
-    for day in np.arange(start,stop,np.timedelta64(1,'D')):
-        day_dt=utils.to_datetime(day)
-        for run_start in [0,12]: # Two runs per day
-            run_tag="%04d%02d%02d%02d"%(day_dt.year,
-                                        day_dt.month,
-                                        day_dt.day,
-                                        run_start)
-            base_url=("http://www.usgodae.org/pub/outgoing/fnmoc/models/"
-                      "coamps/calif/cencoos/cencoos_4km/%04d/%s/")%(day_dt.year,run_tag)
-            
-            for hour in range(12):
-                recs=dict()
-                
-                for field_name in ['wnd_utru','wnd_vtru','pres_msl']:
-                    if field_name in ['wnd_utru','wnd_vtru']:
-                        elev_code=105 # 0001: surface?  0105: above surface  0100: pressure?
-                        elev=100
-                    else:
-                        # pressure at sea level
-                        elev_code=102
-                        elev=0
-                    url_file=("US058GMET-GR1dyn.COAMPS-CENCOOS_CENCOOS-n3-c1_"
-                              "%03d"
-                              "00F0NL"
-                              "%s_%04d_%06d-000000%s")%(hour,run_tag,elev_code,elev,field_name)
+    # The timestamps we're trying for
+    target_hours=np.arange(start,stop,np.timedelta64(1,'h'))
+    
+    for hour in target_hours:
+        day_dt=utils.to_datetime(hour)
 
-                    output_fn=os.path.join(cache_path, dataset_name, url_file)
-                    recs[field_name]=dict(url=base_url+url_file,
-                                          local=output_fn,
-                                          timestamp=day+(run_start+hour)*np.timedelta64(1,'h'))
-                yield recs
+        # Start time of the ideal run:
+        run_start0=day_dt - datetime.timedelta(hours=day_dt.hour%12)
+
+        # runs go for 48 hours, so we have a few chances to get the
+        # same output timestamp
+        for step_back in [0,12,24,36]:
+            run_start=run_start0-datetime.timedelta(hours=step_back)
+
+            # how many hours into this run is the target datetime?
+            hour_of_run = int(round((day_dt - run_start).total_seconds() / 3600))
+
+            run_tag="%04d%02d%02d%02d"%(run_start.year,
+                                        run_start.month,
+                                        run_start.day,
+                                        run_start.hour)
+            base_url=("http://www.usgodae.org/pub/outgoing/fnmoc/models/"
+                      "coamps/calif/cencoos/cencoos_4km/%04d/%s/")%(run_start.year,run_tag)
+            
+            recs=dict()
+
+            for field_name in ['wnd_utru','wnd_vtru','pres_msl']:
+                if field_name in ['wnd_utru','wnd_vtru']:
+                    elev_code=105 # 0001: surface?  0105: above surface  0100: pressure?
+                    elev=100
+                else:
+                    # pressure at sea level
+                    elev_code=102
+                    elev=0
+                url_file=("US058GMET-GR1dyn.COAMPS-CENCOOS_CENCOOS-n3-c1_"
+                          "%03d"
+                          "00F0NL"
+                          "%s_%04d_%06d-000000%s")%(hour_of_run,run_tag,elev_code,elev,field_name)
+
+                output_fn=os.path.join(cache_path, dataset_name, url_file)
+                recs[field_name]=dict(url=base_url+url_file,
+                                      local=output_fn,
+                                      timestamp=hour)
+            if known_missing(recs):
+                continue
+            yield recs
+            break
+        else:
+            raise Exception("Couldn't find a run for date %s"%day_dt.strftime('%Y-%m-%d %H:%M'))
+
 
 def fetch_coamps_wind(start,stop):
     """
@@ -90,6 +130,7 @@ def fetch_coamps_wind(start,stop):
             if os.path.exists(output_fn):
                 # print("Skip %s"%os.path.basename(output_fn))
                 continue
+
             print("Fetch %s"%os.path.basename(output_fn))
 
             response=requests.get(rec['url'],stream=True)
