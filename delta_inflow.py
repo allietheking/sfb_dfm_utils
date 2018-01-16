@@ -48,10 +48,15 @@ def add_delta_inflow(run_base_dir,
         ref_date = ref_date + time_offset
     
     pad=np.timedelta64(3,'D')
+
+    start_dt=utils.to_datetime(run_start)
+    stop_dt =utils.to_datetime(run_stop)
+    date_range="%s_%s"%(start_dt.strftime('%Y%m%d'),
+                        stop_dt.strftime('%Y%m%d'))
     
     if 1: 
         # Cache the original data from USGS, then clean it and write to DFM format
-        jersey_raw_fn=os.path.join(run_base_dir,'jersey-raw.nc')
+        jersey_raw_fn=os.path.join(run_base_dir,'jersey-raw-%s.nc'%date_range)
         if not os.path.exists(jersey_raw_fn):
             jersey_raw=usgs_nwis.nwis_dataset(station="11337190",
                                               start_date=run_start-pad,end_date=run_stop+pad,
@@ -60,7 +65,7 @@ def add_delta_inflow(run_base_dir,
                                               days_per_request=30)
             jersey_raw.to_netcdf(jersey_raw_fn,engine='scipy')
 
-        rio_vista_raw_fn=os.path.join(run_base_dir,'rio_vista-raw.nc')
+        rio_vista_raw_fn=os.path.join(run_base_dir,'rio_vista-raw-%s.nc'%date_range)
         if not os.path.exists(rio_vista_raw_fn):
             rio_vista_raw=usgs_nwis.nwis_dataset(station="11455420",
                                                  start_date=run_start-pad,end_date=run_stop+pad,
