@@ -477,10 +477,14 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
     return map_out
 
 # Not exactly ROMS-specific, but helps with using ROMS coupling
-def add_sponge_layer(mdu,run_base_dir,grid,edges,sponge_visc,background_visc,sponge_L):
+def add_sponge_layer(mdu,run_base_dir,grid,edges,sponge_visc,background_visc,sponge_L,
+                     quantity='viscosity'):
+    """
+    quantity: 'viscosity' or 'diffusivity'
+    """
     obc_centers=grid.edges_center()[edges]
 
-    sponge_L=25000 # [m] roughly 8 cells
+    # sponge length scale: 25000 [m] is roughly 8 cells
 
     sample_sets=[ np.c_[obc_centers[:,0],obc_centers[:,1],sponge_visc*np.ones(len(obc_centers))] ]
 
@@ -507,11 +511,11 @@ def add_sponge_layer(mdu,run_base_dir,grid,edges,sponge_visc,background_visc,spo
 
     visc_samples=np.concatenate(sample_sets,axis=0)
 
-    np.savetxt(os.path.join(run_base_dir,'viscosity.xyz'),
+    np.savetxt(os.path.join(run_base_dir,'%s.xyz'%quantity),
                visc_samples)
 
-    txt="\n".join(["QUANTITY=horizontaleddyviscositycoefficient",
-                   "FILENAME=viscosity.xyz",
+    txt="\n".join(["QUANTITY=horizontaleddy%scoefficient"%quantity,
+                   "FILENAME=%s.xyz"%quantity,
                    "FILETYPE=7",
                    "METHOD=4",
                    "OPERAND=O"
