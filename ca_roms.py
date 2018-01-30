@@ -22,6 +22,7 @@ from stompy.spatial import wkb2shp
 from stompy.plot import plot_utils, plot_wkb
 from stompy.spatial import proj_utils, wkb2shp,field, linestring_utils
 from stompy.model.delft import dfm_grid
+import stompy.model.delft.io as dio
 
 from shapely import geometry
 from shapely.ops import cascaded_union
@@ -323,7 +324,61 @@ def annotate_grid_from_data(g,start,stop,candidate_edges=None):
     g.add_edge_field('bc_norm_in',edge_norm_in,on_exists='overwrite')
     
 
-def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
+
+
+class DFMZModel(object):
+    def __init__(self,map_out,mdu):
+        self.map_out=map_out
+        self.mdu=mdu
+        zvar=self.map_out.LayCoord_cc # could be more dynamic about this
+        std_name=zvar.attrs.get('standard_name','')
+        long_name=zvar.attrs.get('long_name','')
+        
+        if std_name=="ocean_sigma_coordinate":
+            self.coord_type='sigma'
+        elif std_name=="ocean_zlevel_coordinate":
+            self.coord_type='zlevel'
+        elif long_name.startswith('sigma layer'):
+            self.coord_type='sigma'
+        elif long_name.startswith('z layer'):
+            self.coord_type='zlevel'
+        else:
+            raise Exception("Cannot decipher type of vertical coordinate system")
+
+        self.all_bl=map_out.FlowElem_bl.values
+        self.all_wd=map_out.waterdepth.isel(time=0).values
+        
+        if self.coord_type=='zlevel':
+            print("Detected z layers!")
+            self.max_depth=self.all_bl.min()
+            self.n_layers=len(zvar)
+            if 0: # uniform
+                bounds=np.linspace(self.max_depth,0,self.n_layers+1)
+            else: # exponential
+                bounds=dio.exp_z_layers(mdu)
+                print("Bounds are %s"%bounds)
+            middles=0.5*(bounds[:-1] + bounds[1:])
+            self.z_layers=middles
+        elif self.coord_type=='sigma':
+            self.sigma=zvar.values
+            # Not ready for anything spatially variable
+            assert self.sigma.ndim==1
+
+            
+    def get_dfm_z(self,c):
+        if self.coord_type=='sigma':
+            # This way is nice but very slow:
+            # bl=map_out.FlowElem_bl.isel(nFlowElem=c).values # positive up from the z datum
+            # wd=map_out.waterdepth.isel(nFlowElem=c,time=0).values
+            # sigma=map_out.LayCoord_cc.values
+            bl=self.all_bl[c]
+            wd=self.all_wd[c]
+
+            return self.bl + self.wd*self.sigma
+        else:
+            return self.z_layers
+    
+def set_ic_from_map_output(snap,map_file,mdu,output_fn='initial_conditions_map.nc',
                            missing=0,tol_km=10):
     """
     copy the structure of the map_file at one time step, but overwrite
@@ -331,6 +386,7 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
 
     snap: A ROMS output file, loaded as xr.Dataset
     map_file: path to map output, must be single processor run.
+    mdu: An MDUFile object, for discerning vertical coordinates
     output_fn: If specified, the updated map file is written to the given path.
     
     missing: for locations in the map file which are missing or unmatched in the ROMS
@@ -370,7 +426,6 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
     wet=np.isfinite(snap0.zeta.transpose('lat','lon').values)
     snap_scalars=[snap0[roms_field].transpose('lat','lon','depth').values
                   for roms_field in roms_fields]
-    #snap_salt=snap0.salt.transpose('lat','lon','depth').values
     
     snap_lon=snap0.lon.values
     snap_lat=snap0.lat.values
@@ -378,23 +433,8 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
     sel_time=xr.DataArray([0],dims=['time'])
     sel_cell=xr.DataArray([1000000],dims=['nFlowElem'])
 
-    all_bl=map_out.FlowElem_bl.values
-    all_wd=map_out.waterdepth.isel(time=0).values
-    # This only works for uniform sigma values - spatially variable or
-    # z-levels would require other code
-    sigma=map_out.LayCoord_cc.values
-    assert sigma.ndim==1
-    
-    def get_dfm_z(c):
-        # This way is nice but very slow:
-        # bl=map_out.FlowElem_bl.isel(nFlowElem=c).values # positive up from the z datum
-        # wd=map_out.waterdepth.isel(nFlowElem=c,time=0).values
-        # sigma=map_out.LayCoord_cc.values
-        bl=all_bl[c]
-        wd=all_wd[c]
+    dfm_z_model=DFMZModel(map_out,mdu)
 
-        return bl + wd*sigma
-    
     # much faster to write straight to numpy array rather than
     # via xarray.  But for a bit more robustness, hack together
     # dynamic indexing
@@ -444,7 +484,7 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
             if not np.any(valid):
                 is_missing=True 
             else:
-                dfm_z=get_dfm_z(c)
+                dfm_z=dfm_z_model.get_dfm_z(c)
 
                 dfm_scalars=[ np.interp(dfm_z,roms_z[valid],roms_scalar[valid])
                               for roms_scalar in roms_scalars ]
@@ -469,6 +509,10 @@ def set_ic_from_map_output(snap,map_file,output_fn='initial_conditions_map.nc',
         map_out[dest_field].values[:,:,:]=dest # a little dicey        
     # that was legal, and took, right? check the first one
     assert np.allclose( map_out.sa1.values, dest_arrays[0] )
+
+    # unorm isn't that useful, and in z-layers it stalls the whole show.
+    if 'unorm' in map_out:
+        del map_out['unorm']
     
     # Does the map timestamp have to match what's in the mdu?
     # Yes.
