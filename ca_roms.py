@@ -511,8 +511,10 @@ def set_ic_from_map_output(snap,map_file,mdu,output_fn='initial_conditions_map.n
     assert np.allclose( map_out.sa1.values, dest_arrays[0] )
 
     # unorm isn't that useful, and in z-layers it stalls the whole show.
-    if 'unorm' in map_out:
-        del map_out['unorm']
+    # DFM writes a bunch of warnings about vicwwu
+    for bad_field in ['unorm','vicwwu']:
+        if bad_field in map_out:
+            del map_out[bad_field]
     
     # Does the map timestamp have to match what's in the mdu?
     # Yes.
