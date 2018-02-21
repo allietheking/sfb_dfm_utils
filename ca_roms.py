@@ -39,6 +39,10 @@ def fetch_ca_roms(start,stop):
     Download the 6-hourly outputs for the given period.
     start,stop: np.datetime64 
     returns a list of paths to local files falling in that period
+    when a file cannot be downloaded, but falls in the period, the previous
+    valid file is written out with a fake name, and a variable "original_filename"
+    indicates the source of the copy.  This currently does *not* handle the first
+    file being invalid.
 
     Pads the dates out by 12-36 h, as the data files are every 6h, staggered,
     and the stop date gets truncated 1 day
@@ -54,24 +58,48 @@ def fetch_ca_roms(start,stop):
     assert os.path.exists(cache_path)
     
     local_files=[]
-        
+
+    last_valid_fn=None
+    
     # As a first step, construct the url by hand:
     for day in np.arange(start,stop,np.timedelta64(1,'D')):
         logger.info(day)
-        for hour in [3,9,15,21]: #
+        for hour in [3,9,15,21]: # 6 hourly output staggered 3 hours
             ymd=utils.to_datetime(day).strftime("%Y%m%d")
             url="http://west.rssoffice.com:8080/thredds/dodsC/roms/CA3km-nowcast/CA/ca_subCA_das_%s%02d.nc"%(ymd,hour)
             base_fn=url.split('/')[-1]
             local_fn=os.path.join(cache_path,base_fn)
+
             if os.path.exists(local_fn):
                 logger.info("%30s: exists"%base_fn)
+                last_valid_fn=local_fn
             else:
                 logger.info("%30s: fetching"%base_fn)
-                ds_fetch=xr.open_dataset(url)
-                # in the future, we could subset at this point for a possible speedup.
-                logger.info("%30s  saving"%"")
-                ds_fetch.to_netcdf(local_fn)
-                ds_fetch.close()
+                try:
+                    ds_fetch=xr.open_dataset(url)
+                except OSError as exc:
+                    logger.warning("%27s  FAILED"%'')
+                    if last_valid_fn is None:
+                        print(" -- last valid is None, can't rescue, will omit")
+                        # missing files at start of period -- omit
+                        # from the returned list
+                        continue
+                    else:
+                        ds_fetch=xr.open_dataset(last_valid_fn)
+                        if 'original_filename' not in ds_fetch.attrs:
+                            ds_fetch.attrs['original_filename']=last_valid_fn
+                        # And overwrite title, which is the only reliable timestamp
+                        # in these files.
+                        ds_fetch.attrs['title']='CA-%s%02d'%(ymd,hour)
+                    
+                if ds_fetch is not None:
+                    # in the future, we could subset at this point for a possible speedup.
+                    logger.info("%30s  saving"%"")
+                    ds_fetch.to_netcdf(local_fn)
+                    ds_fetch.close()
+                    if 'original_filename' not in ds_fetch.attrs:
+                        last_valid_fn=local_fn
+                    
                 logger.info("%30s  sleeping"%"")
                 time.sleep(5) # be nice!
             local_files.append(local_fn)
@@ -253,7 +281,7 @@ def annotate_grid_from_data(g,start,stop,candidate_edges=None):
     """
     # Get the list of files
     ca_roms_files=fetch_ca_roms(start,stop)
-    
+
     # Scan all of the ROMS files to find cells which are always wet
     wet=True
     for ca_roms_file in ca_roms_files:
