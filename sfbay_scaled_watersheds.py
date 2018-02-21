@@ -191,8 +191,12 @@ def add_sfbay_freshwater(mdu,
         # area represented by reference gages at each time step
         ref_area=np.sum( np.isfinite(sub_flows['stream_flow_mean_daily'].values) * gage_areas[:,None],
                          axis=site_axis )
+        
+        # avoid division by zero for steps missing all flows
+        feat_cms=featA * ref_cms
+        feat_cms[ref_area>0] /= ref_area
+        feat_cms[ref_area==0.0] = np.nan
 
-        feat_cms=featA * ref_cms / ref_area
         stn_ds=xr.Dataset()
         stn_ds['time']=flows_ds.time
         missing=np.isnan(feat_cms)
