@@ -39,10 +39,14 @@ def fetch_ca_roms(start,stop):
     Download the 6-hourly outputs for the given period.
     start,stop: np.datetime64 
     returns a list of paths to local files falling in that period
-    when a file cannot be downloaded, but falls in the period, the previous
+    
+    When a file cannot be downloaded, but falls in the period, the previous
     valid file is written out with a fake name, and a variable "original_filename"
     indicates the source of the copy.  This currently does *not* handle the first
     file being invalid.
+
+    There are a few cases of a file having no data -- this method checks for
+    all of zeta being nan, in which case the file is treated as missing.
 
     Pads the dates out by 12-36 h, as the data files are every 6h, staggered,
     and the stop date gets truncated 1 day
@@ -79,6 +83,14 @@ def fetch_ca_roms(start,stop):
                     ds_fetch=xr.open_dataset(url)
                 except OSError as exc:
                     logger.warning("%27s  FAILED"%'')
+                    ds_fetch=None
+
+                # Check for an invalid file:
+                if np.all( np.isnan( ds_fetch.zeta.isel(time=0) ) ):
+                    logger.warning("%27s has no wet cells?!"%"")
+                    ds_fetch=None # Treat as missing
+
+                if ds_fetch is None:
                     if last_valid_fn is None:
                         print(" -- last valid is None, can't rescue, will omit")
                         # missing files at start of period -- omit
@@ -269,30 +281,66 @@ def add_coastal_bathy(g,dem=None):
 
     return g
 
-def annotate_grid_from_data(g,start,stop,candidate_edges=None):
+def infer_variable(ds,canon):
     """
-    Add src_idx_in,src_idx_out fields to edges for ROMS-adjacent boundary 
-    edges.
+    ds: xr.Dataset
+    canon: 'zeta','salt','temp','u','v'
+    """
+    # hacky - but different models have different names
+    # HYCOM at least has a good standard name for eta:
+    #     standard_name:  sea_surface_elevation
+    # but CA ROMS just has a long name 
+    #     long_name:  Sea Surface Height
+    # For now, hard code...
+    if canon in ds:
+        return canon 
+
+    synonyms={'zeta':['surf_el'],
+              'salt':['salinity'],
+              'temp':['temperature','water_temp'],
+              'u':['water_u'],
+              'v':['water_v']}
+
+    for syn in synonyms[canon]:
+        if syn in ds:
+            return syn
+    raise None
+
+def annotate_grid_from_data(g,coastal_files,candidate_edges=None,check_wet=False):
+    """
+    Add src_idx_in,src_idx_out fields to edges for edges which are 
+    adjacent to active cells in the lat/lon rectilinear grid inputs 
+    given in coastal_files.
 
     g: unstructured_grid to be annotated
-    start,stop: datetime64 date range, for selecting wet cells from ROMS
+    coastal_files: list of file paths, giving the snapshots of a coastal
+      model (assumed to have a rectilinear lat/lon grid)
     candidate_edges: if specified, only consider these edges, an array
       of edge indices
+    check_wet: if true scan the files to limit the selection of boundary edges
+      to cells which are wet at all time steps
     """
-    # Get the list of files
-    ca_roms_files=fetch_ca_roms(start,stop)
-
     # Scan all of the ROMS files to find cells which are always wet
     wet=True
-    for ca_roms_file in ca_roms_files:
-        logging.info(ca_roms_file)
-        ds=xr.open_dataset(ca_roms_file)
-        wet = wet & np.isfinite( ds.zeta.isel(time=0).values )
-        ds.close()
 
-    # If we had ROMS data in a single dataset:    
-    # wet=np.all( np.isfinite(src.zeta.values),
-    #             axis=src.zeta.get_axis_num('time') )
+    ds=xr.open_dataset(coastal_files[0])
+    eta_var=infer_variable(ds,'zeta')
+    wet=np.ones( ds[eta_var].values.shape, np.bool )
+
+    for coastal_file in coastal_files:
+        logging.info(coastal_file)
+        ds=xr.open_dataset(coastal_file)
+        eta_values=ds[eta_var]
+        if 'time' in eta_values.dims:
+            eta_values=eta_values.isel(time=0)
+        one_step=np.isfinite( eta_values.values )
+        assert not np.all(~one_step), "Coastal model file %s has no wet cells?!"%coastal_file
+
+        wet = wet & one_step
+        ds.close()
+        if not check_wet:
+            logging.info("Will assume wet-cells in first time step true for eternity")
+            break
 
     boundary_cells=[]
     boundary_edges=[]
@@ -309,12 +357,14 @@ def annotate_grid_from_data(g,start,stop,candidate_edges=None):
     centroid=g.cells_centroid()
     edge_ctr=g.edges_center()
 
-    src=xr.open_dataset(ca_roms_files[0])
+    src=xr.open_dataset(coastal_files[0])
 
     if candidate_edges is None:
-        candidate_edges=np.arange(g.Nedges())
+        # at least limit to boundary edges
+        candidate_edges=np.nonzero( g.edges['cells'].min(axis=1)<0 )[0]
+        # old code: arange(g.Nedges())
     
-    for j in candidate_edges: # range(g.Nedges()):
+    for j in candidate_edges:
         if j%1000==0:
             logger.info("%d/%d"%(j,N))
         c1,c2=g.edges['cells'][j]
@@ -329,7 +379,7 @@ def annotate_grid_from_data(g,start,stop,candidate_edges=None):
         cout_cc=2*edge_ctr[j] - centroid[cin]
         cout_cc_ll=utm2ll(cout_cc)
 
-        lon_idx_out=utils.nearest(src.lon.values,cout_cc_ll[0]%360.0)
+        lon_idx_out=utils.nearest(src.lon.values%360.0,cout_cc_ll[0]%360.0)
         lat_idx_out=utils.nearest(src.lat.values,cout_cc_ll[1])
 
         if not wet[lat_idx_out,lon_idx_out]:
@@ -351,7 +401,6 @@ def annotate_grid_from_data(g,start,stop,candidate_edges=None):
     g.add_edge_field('src_idx_in',edge_src_idx_in,on_exists='overwrite')
     g.add_edge_field('bc_norm_in',edge_norm_in,on_exists='overwrite')
     
-
 
 
 class DFMZModel(object):
@@ -427,6 +476,7 @@ def set_ic_from_map_output(snap,map_file,mdu,output_fn='initial_conditions_map.n
     """
     dest_fields=['sa1','tem1'] # names of the fields to write to in the map file
     roms_fields=['salt','temp'] # source fields in the ROMS data
+    normalize_variables(snap)
 
     map_in=xr.open_dataset(map_file)
 
@@ -448,7 +498,11 @@ def set_ic_from_map_output(snap,map_file,mdu,output_fn='initial_conditions_map.n
 
     roms_z=-snap.depth.values[::-1]
 
-    snap0=snap.isel(time=0)
+    if snap.time.ndim>0:
+        snap0=snap.isel(time=0)
+    else:
+        snap0=snap
+
     # make the dimension order explicit so we can safely index
     # this via numpy below
     wet=np.isfinite(snap0.zeta.transpose('lat','lon').values)
@@ -599,3 +653,73 @@ def add_sponge_layer(mdu,run_base_dir,grid,edges,sponge_visc,background_visc,spo
     with open(old_bc_fn,'at') as fp:
         fp.write(txt)
         
+
+def extract_data_at_boundary(coastal_files,g,boundary_edges):
+    """
+    coastal_files: list of file paths for lat/lon rectilinear coastal ocean model
+      output (one file per time step)
+    g: unstructured_grid
+    boundary_edges: list/array of edge indices on g for which to extract 
+      data.
+
+    returns an xarray Dataset with cell values pulled out for each boundary edge,
+      over the times represented by coastal_files.
+
+    Also normalizes some variable names:
+     water surface elevation: zeta
+    """
+    # Pre-extract some fields from the ROMS data
+    # Might move this to ca_roms.py in the future
+    # This might be getting the wrong locations.
+    # This is pretty slow
+    extracted=[]
+    lat_da=xr.DataArray(g.edges['src_idx_out'][boundary_edges,0],dims='boundary')
+    lon_da=xr.DataArray(g.edges['src_idx_out'][boundary_edges,1],dims='boundary')
+
+    for coastal_file in coastal_files:
+        ds=xr.open_dataset(coastal_file)
+        ds.load()
+
+        # Total hack - 
+        # ROMS snapshots have a bogus time stamp in them.
+        if 'title' in ds: # probably a ROMS file, fix the timestamp
+            # timestamps appear to be wrong in the files, always
+            # holding 2009-01-02.
+            # use the title, which appears to be consistent with the filename
+            # and the true time
+            t=utils.to_dt64( datetime.datetime.strptime(ds.title,'CA-%Y%m%d%H') )
+            ds.time.values[0]=t
+            
+        if ds.time.ndim>0: 
+            # ROMS files have a 1-element time vector
+            sub_ds=ds.isel(time=0)
+        else:
+            # HYCOM files have a scalar time value
+            sub_ds=ds
+        sub_ds=sub_ds.isel(lat=lat_da,lon=lon_da)
+        # The above has gotten warnings along the lines of:
+        # .../numeric.py:1466: VisibleDeprecationWarning: converting an array with
+        #  ndim > 0 to an index will result in an error in the future
+        # Yet these still check out - 
+        assert np.allclose(ds.lon[lon_da].values,sub_ds.lon.values)
+        assert np.allclose(ds.lat[lat_da].values,sub_ds.lat.values)
+
+        extracted.append(sub_ds)
+        ds.close()
+
+    data_at_boundary=xr.concat(extracted,dim='time')
+
+    normalize_variables(data_at_boundary)
+
+    return data_at_boundary
+
+
+def normalize_variables(ds):
+    for v in ['zeta','salt','temp','u','v']:
+        v_inf=infer_variable(ds,v)
+        if v_inf is None:
+            continue
+        if v_inf!=v:
+            # make a shallow copy with the canonical name
+            ds[v]=ds[v_inf]
+

@@ -157,35 +157,46 @@ def coamps_press_windxy_dataset(g_target,start,stop):
     crop=[xy_min[0]-pad,xy_max[0]+pad,
           xy_min[1]-pad,xy_max[1]+pad]
 
-    dss=[]
+    dss=[] 
 
     for recs in coamps_files(start,stop):
         timestamp=recs['wnd_utru']['timestamp']
-        timestamp_str=utils.to_datetime(timestamp).strftime('%Y-%m-%d %H:%M')
-        print(timestamp_str)
+        timestamp_dt=utils.to_datetime(timestamp)
+        timestamp_str=timestamp_dt.strftime('%Y-%m-%d %H:%M')
+        # use the local file dirname to get the same model subdirectory
+        # i.e. cencoos_4km
+        cache_fn=os.path.join(os.path.dirname(recs['pres_msl']['local']),
+                              "%s.nc"%timestamp_dt.strftime('%Y%m%d%H%M'))
+        if not os.path.exists(cache_fn):
+            print(timestamp_str)
 
-        # load the 3 fields:
-        wnd_utru=field.GdalGrid(recs['wnd_utru']['local'])
-        wnd_vtru=field.GdalGrid(recs['wnd_vtru']['local'])
-        pres_msl=field.GdalGrid(recs['pres_msl']['local'])
+            # load the 3 fields:
+            wnd_utru=field.GdalGrid(recs['wnd_utru']['local'])
+            wnd_vtru=field.GdalGrid(recs['wnd_vtru']['local'])
+            pres_msl=field.GdalGrid(recs['pres_msl']['local'])
 
-        # Reproject to UTM: these come out as 3648m resolution, compared to 4km input.
-        # Fine.  366 x 325.  Crops down to 78x95
-        wnd_utru_utm=wnd_utru.warp("EPSG:26910").crop(crop)
-        wnd_vtru_utm=wnd_vtru.warp("EPSG:26910").crop(crop)
-        pres_msl_utm=pres_msl.warp("EPSG:26910").crop(crop)
+            # Reproject to UTM: these come out as 3648m resolution, compared to 4km input.
+            # Fine.  366 x 325.  Crops down to 78x95
+            wnd_utru_utm=wnd_utru.warp("EPSG:26910").crop(crop)
+            wnd_vtru_utm=wnd_vtru.warp("EPSG:26910").crop(crop)
+            pres_msl_utm=pres_msl.warp("EPSG:26910").crop(crop)
 
-        ds=xr.Dataset()
-        ds['time']=timestamp
-        x,y = wnd_utru_utm.xy()
-        ds['x']=('x',),x
-        ds['y']=('y',),y
-        # copy, in hopes that we can free up ram more quickly
-        ds['wind_u']=('y','x'), wnd_utru_utm.F.copy()
-        ds['wind_v']=('y','x'), wnd_vtru_utm.F.copy()
-        ds['pres']=('y','x'), pres_msl_utm.F.copy()
+            ds=xr.Dataset()
+            ds['time']=timestamp
+            x,y = wnd_utru_utm.xy()
+            ds['x']=('x',),x
+            ds['y']=('y',),y
+            # copy, in hopes that we can free up ram more quickly
+            ds['wind_u']=('y','x'), wnd_utru_utm.F.copy()
+            ds['wind_v']=('y','x'), wnd_vtru_utm.F.copy()
+            ds['pres']=('y','x'), pres_msl_utm.F.copy()
 
-        dss.append(ds)
+            ds.to_netcdf(cache_fn)
+            ds.close()
+        ds=xr.open_dataset(cache_fn)
+        ds.load() # force load of data
+        ds.close() # and close out file handles
+        dss.append(ds) # so this is all in ram.
 
     ds=xr.concat(dss,dim='time')
     return ds
@@ -206,6 +217,10 @@ def add_coamps_to_mdu(mdu,run_base_dir,g_target,use_existing=True):
     legit and don't recreate.
     """
     ref_date,start,stop = mdu.time_range()
+    pad=np.timedelta64(2,'D')
+    start=start-pad
+    stop=stop+pad
+    
     output_base=os.path.join(run_base_dir,'coamps4km')
 
     old_bc_fn = os.path.join(run_base_dir,mdu['external forcing','ExtForceFile'])
@@ -220,7 +235,10 @@ def add_coamps_to_mdu(mdu,run_base_dir,g_target,use_existing=True):
                 use_existing=False
 
     if not use_existing:
-        # These need to be synchronized within this file
+        # These need to be synchronized within this file --
+        # pretty sure I meant that the filenames and choice of 
+        # variables must be consistent between meteo_quants, and
+        # what is populated in coamps_press_windxy_dataset
         write_coamps_press_windxy(g_target,start,stop,output_base)
 
     for suffix,quant in zip(meteo_suffixes,meteo_quants):

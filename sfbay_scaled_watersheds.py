@@ -194,7 +194,7 @@ def add_sfbay_freshwater(mdu,
         
         # avoid division by zero for steps missing all flows
         feat_cms=featA * ref_cms
-        feat_cms[ref_area>0] /= ref_area
+        feat_cms[ref_area>0] /= ref_area[ ref_area>0 ]
         feat_cms[ref_area==0.0] = np.nan
 
         stn_ds=xr.Dataset()
