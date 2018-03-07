@@ -474,18 +474,29 @@ def set_ic_from_map_output(snap,map_file,mdu,output_fn='initial_conditions_map.n
 
     returns a Dataset() of the updated map
     """
-    dest_fields=['sa1','tem1'] # names of the fields to write to in the map file
-    roms_fields=['salt','temp'] # source fields in the ROMS data
+    dest_fields=[]
+    roms_fields=[]
+    if int(mdu['physics','salinity']):
+        dest_fields.append('sa1')
+        roms_fields.append('salt')
+    if int(mdu['physics','temperature']):
+        dest_fields.append('tem1')
+        roms_fields.append('temp')
+
     normalize_variables(snap)
 
     map_in=xr.open_dataset(map_file)
 
     map_out=map_in.isel(time=[0])
+
     # there are some name clashes -- drop any coordinates attributes
     #
     for dv in map_out.data_vars:
         if 'coordinates' in map_out[dv].attrs:
             del map_out[dv].attrs['coordinates']
+
+    if len(dest_fields)==0:
+        return map_out
 
     # DFM reorders the cells, so read it back in.
     g_map=dfm_grid.DFMGrid(map_out)
