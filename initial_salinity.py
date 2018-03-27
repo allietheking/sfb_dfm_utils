@@ -57,16 +57,53 @@ def add_initial_salinity(run_base_dir,
 # mdu={('geometry','NetFile'):'lsb_v99_net.nc'}
 # run_base_dir="runs/short_winter2016_04"
 
-def initial_salinity_dyn(run_base_dir,
-                         mdu,
-                         static_dir,
-                         run_start):
-    g=dfm_grid.DFMGrid(os.path.join(run_base_dir,mdu['geometry','NetFile']))
+def samples_to_cells(init_salt,g):
+    """
+    init_salt: array [N,3] samples point * {x,y,salt}  
+    g: the unstructured_grid to extrapolate onto
+    """
+    # try again, but with the interp_4d code:
+    samples=pd.DataFrame()
+    samples['x']=init_salt[:,0]
+    samples['y']=init_salt[:,1]
+    samples['value']=init_salt[:,2]
+    # doesn't really matter, though should be kept in check with alpha
+    # and K_j
+    samples['weight']=1e6*np.ones_like(init_salt[:,0])
 
-    ##
+    # alpha=2e-5 is too sharp
+    # 5e-6 still too sharp
+    # Not sure why higher values looked fine when running this directly,
+    # but when it's part of the sfb_dfm.py script it needs really low
+    # values of alpha.
+    salt=interp_4d.weighted_grid_extrapolation(g,samples,alpha=3e-7)
 
-    # Get some observations:
+    # If these fail, the extrapolation approach may be running into
+    # numerical difficulties, often made worse by an alpha which is too
+    # large (which might be attempting to do less smoothing).
+    # decreasing alpha (which results in a smoother field) may help.
+    assert np.all( np.isfinite(salt) )
+    assert salt.max() < 40
+    assert salt.min() > -1 # allow a bit of slop
 
+    # use centroids as they are more predictable
+    cc=g.cells_centroid()
+
+    cc_salt=np.concatenate( ( cc, salt[:,None] ),axis=1 )
+    return cc_salt
+
+
+def samples_from_usgs(run_start,field='salinity'):
+    """
+    Pull some USGS transect data and return a set of 2D salinity
+    samples appropriate for the given date.
+    Caveats: This is currently using ERDDAP behind the scenes, which
+    does not have the most recent data.  It will use a prior year
+    if the date cannot be matched within 30 days.
+
+    field: name of the field to pull from usgs_crusies.
+       'salinity','temperature'
+    """
     # This copy of the USGS data ends early:
     usgs_data_end=np.datetime64('2016-04-28')
     usgs_pad=np.timedelta64(30,'D')
@@ -81,18 +118,24 @@ def initial_salinity_dyn(run_base_dir,
                                            usgs_target + usgs_pad )
 
     # lame filling
-    salt3d=usgs_cruises['salinity']
-    salt2d=salt3d.mean(dim='prof_sample')
-    assert salt2d.dims[0]=='date'
-    salt2d_fill=utils.fill_invalid(salt2d.values,axis=0)
+    scal3d=usgs_cruises[field]
+    scal2d=scal3d.mean(dim='prof_sample')
+    assert scal2d.dims[0]=='date'
+    scal2d_fill=utils.fill_invalid(scal2d.values,axis=0)
 
-    salt_f=interp1d(utils.to_dnum(salt2d.date.values),
-                    salt2d_fill,
+    scal_f=interp1d(utils.to_dnum(scal2d.date.values),
+                    scal2d_fill,
                     axis=0,bounds_error=False)(utils.to_dnum(usgs_target))
 
-    usgs_init_salt=np.c_[salt2d.x.values,salt2d.y.values,salt_f]
-    ##
+    usgs_init_scal=np.c_[scal2d.x.values,scal2d.y.values,scal_f]
+    return usgs_init_scal
 
+def samples_from_sfei_moorings(run_start):
+    """
+    return [N,3] array of salinity data from SFEI moorings appropriate for
+    given date.  Note that this may have no data, but will be returned
+    as a [0,3] array
+    """
     # And pull some SFEI data:
 
     mooring_xy=[]
@@ -132,45 +175,31 @@ def initial_salinity_dyn(run_base_dir,
             mooring_xy.append(xy)
             mooring_salt.append(sfei_salt_now)
 
-    ##
-
     if len(mooring_xy):
         xy=np.array(mooring_xy)
         sfei_init_salt=np.c_[xy[:,0],xy[:,1],mooring_salt]
-        init_salt=np.concatenate( (usgs_init_salt,
-                                   sfei_init_salt) )
     else:
-        init_salt=usgs_init_salt
+        sfei_init_salt=np.zeros( (0,3),'f8')
+    return sfei_init_salt
+
+def initial_salinity_dyn(run_base_dir,
+                         mdu,
+                         static_dir,
+                         run_start):
+    # Get some observations:
+    usgs_init_salt=samples_from_usgs(run_start)
+
+    mooring_salt=samples_from_sfei_moorings(run_start)
+
+    init_salt=np.concatenate( (usgs_init_salt,
+                               sfei_init_salt) )
     ##
+    g=dfm_grid.DFMGrid(os.path.join(run_base_dir,mdu['geometry','NetFile']))
 
-    # try again, but with the interp_4d code:
-    samples=pd.DataFrame()
-    samples['x']=init_salt[:,0]
-    samples['y']=init_salt[:,1]
-    samples['value']=init_salt[:,2]
-    # doesn't really matter, though should be kept in check with alpha
-    # and K_j
-    samples['weight']=1e6*np.ones_like(init_salt[:,0])
+    # Above here is assembling init_salt
+    # Below is extrapolating -- needs g
+    cc_salt = samples_to_cells(init_salt,g)
 
-    # alpha=2e-5 is too sharp
-    # 5e-6 still too sharp
-    # Not sure why higher values looked fine when running this directly,
-    # but when it's part of the sfb_dfm.py script it needs really low
-    # values of alpha.
-    salt=interp_4d.weighted_grid_extrapolation(g,samples,alpha=3e-7)
-
-    # If these fail, the extrapolation approach may be running into
-    # numerical difficulties, often made worse by an alpha which is too
-    # large (which might be attempting to do less smoothing).
-    # decreasing alpha (which results in a smoother field) may help.
-    assert np.all( np.isfinite(salt) )
-    assert salt.max() < 40
-    assert salt.min() > -1 # allow a bit of slop
-
-    # use centroids as they are more predictable
-    cc=g.cells_centroid()
-
-    cc_salt=np.concatenate( ( cc, salt[:,None] ),axis=1 )
 
     # Because DFM is going to use some interpolation, and will not reach outside
     # the convex hull, we have to be extra cautious and throw some points out farther

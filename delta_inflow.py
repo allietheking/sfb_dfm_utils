@@ -20,7 +20,8 @@ def add_delta_inflow(run_base_dir,
                      static_dir,
                      grid,dredge_depth,
                      old_bc_fn,
-                     all_flows_unit=False):
+                     all_flows_unit=False,
+                     time_offset=None):
     """
     Fetch river USGS river flows, add to FlowFM_bnd.ext:
     Per Silvia's Thesis:
@@ -32,17 +33,29 @@ def add_delta_inflow(run_base_dir,
 
     run_base_dir: location of the DFM inputs
     run_start,run_stop: target period for therun
-    statiC_dir: path to static assets, specifically Jersey.pli and RioVista.pli
+    static_dir: path to static assets, specifically Jersey.pli and RioVista.pli
     grid: UnstructuredGrid instance, to be modified at inflow locations
     old_bc_fn: path to old-style boundary forcing file
     all_flows_unit: if True, override all flows to be 1 m3 s-1 for model diagnostics
+    
+    time_offset: pull data from a shifted timeframe.  np.timedelta64(-365,'D') will
+    pull data from a year earlier than the run.
     """
-
+    if time_offset is not None:
+        run_start = run_start + time_offset
+        run_stop = run_stop + time_offset
+        ref_date = ref_date + time_offset
+    
     pad=np.timedelta64(3,'D')
+
+    start_dt=utils.to_datetime(run_start)
+    stop_dt =utils.to_datetime(run_stop)
+    date_range="%s_%s"%(start_dt.strftime('%Y%m%d'),
+                        stop_dt.strftime('%Y%m%d'))
     
     if 0:  # cache here.
         # Cache the original data from USGS, then clean it and write to DFM format
-        jersey_raw_fn=os.path.join(run_base_dir,'jersey-raw.nc')
+        jersey_raw_fn=os.path.join(run_base_dir,'jersey-raw-%s.nc'%date_range)
         if not os.path.exists(jersey_raw_fn):
             jersey_raw=usgs_nwis.nwis_dataset(station="11337190",
                                               start_date=run_start-pad,end_date=run_stop+pad,
@@ -53,7 +66,7 @@ def add_delta_inflow(run_base_dir,
         else:
             jersey_raw=xr.open_dataset(jersey_raw_fn)
 
-        rio_vista_raw_fn=os.path.join(run_base_dir,'rio_vista-raw.nc')
+        rio_vista_raw_fn=os.path.join(run_base_dir,'rio_vista-raw-%s.nc'%date_range)
         if not os.path.exists(rio_vista_raw_fn):
             rio_vista_raw=usgs_nwis.nwis_dataset(station="11455420",
                                                  start_date=run_start-pad,end_date=run_stop+pad,

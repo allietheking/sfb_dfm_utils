@@ -13,7 +13,8 @@ def add_sfbay_freshwater(run_base_dir,
                          freshwater_dir,
                          grid,dredge_depth,
                          old_bc_fn,
-                         all_flows_unit=False):
+                         all_flows_unit=False,
+                         time_offset=None):
     """
     Add freshwater flows from sfbay_freshwater git submodule.
     run_base_dir: location of DFM input files
@@ -23,8 +24,17 @@ def add_sfbay_freshwater(run_base_dir,
     freshwater_dir: path to sfbay_freshwater git submodule
     grid: UnstructuredGrid instance to be modified at input locations
     old_bc_fn: path to old-style forcing input file
-    """
 
+    time_offset: pull freshwater flows from this timedelta off from the
+    specified.  I.e. if your run is really 2016, but you want 2015 flows,
+    specify np.timedelta64(-365,'D').
+    Slightly safer to use days than years here.
+    """
+    if time_offset is not None:
+        run_start = run_start + time_offset
+        run_stop = run_stop + time_offset
+        ref_date = ref_date + time_offset
+        
     def write_flow_data(stn_ds,src_name,flow_scale=1.0):
         df=stn_ds.to_dataframe().reset_index()
         df['elapsed_minutes']=(df.time.values - ref_date)/np.timedelta64(60,'s')
