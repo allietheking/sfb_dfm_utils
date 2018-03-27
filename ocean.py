@@ -8,6 +8,8 @@ import xarray as xr
 from stompy import (utils, filters)
 from stompy.io.local import noaa_coops
 import stompy.model.delft.io as dio
+from . import common
+
 
 # fill any missing data via linear interpolation
 def fill_data(da):
@@ -51,14 +53,24 @@ def add_ocean(run_base_dir,
         else:
             tide_gage="9415020" # Pt Reyes 
 
-        tides_raw_fn=os.path.join(run_base_dir,'tides-%s-raw.nc'%tide_gage)
-        if not os.path.exists(tides_raw_fn):
-            tides_raw=noaa_coops.coops_dataset(tide_gage,
+        if common.cache_dir is None: 
+            tides_raw_fn=os.path.join(run_base_dir,'tides-%s-raw.nc'%tide_gage)
+            if not os.path.exists(tides_raw_fn):
+                tides=noaa_coops.coops_dataset(tide_gage,
                                                run_start-pad_time,run_stop+pad_time,
                                                ["water_level","water_temperature"],
                                                days_per_request=30)
 
-            tides_raw.to_netcdf(tides_raw_fn,engine='scipy')
+                tides.to_netcdf(tides_raw_fn,engine='scipy')
+            else:
+                tides=xr.open_dataset(tides_raw_fn).isel(station=0)
+        else:
+            # rely on caching within noaa_coops
+            tides=noaa_coops.coops_dataset(tide_gage,
+                                           run_start-pad_time,run_stop+pad_time,
+                                           ["water_level","water_temperature"],
+                                           days_per_request='M',
+                                           cache_dir=common.cache_dir)
 
     # Fort Point mean tide range is 1.248m, vs. 1.193 at Point Reyes.
     # apply rough correction to amplitude.
@@ -76,8 +88,6 @@ def add_ocean(run_base_dir,
 
     if 1:
         # Clean that up, fabricate salinity
-        tides=xr.open_dataset(tides_raw_fn).isel(station=0)
-
         water_level=utils.fill_tidal_data(tides.water_level)
 
         # IIR butterworth.  Nicer than FIR, with minor artifacts at ends

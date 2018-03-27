@@ -6,7 +6,7 @@ import stompy.model.delft.io as dio
 from stompy import utils
 from stompy.io.local import usgs_nwis
 
-from . import dredge_grid
+from . import (dredge_grid,common)
 
 # copied Silvia's pli files to inputs-static
 # even though there are 14 of these, one per node of the sea boundary,
@@ -14,7 +14,6 @@ from . import dredge_grid
 # Sea_temp: probably grabbed from Point Reyes?
 # Sea_sal: constant 33
 # Sea_0001.pli - 
-
 
 def add_delta_inflow(run_base_dir,
                      run_start,run_stop,ref_date,
@@ -41,7 +40,7 @@ def add_delta_inflow(run_base_dir,
 
     pad=np.timedelta64(3,'D')
     
-    if 1: 
+    if 0:  # cache here.
         # Cache the original data from USGS, then clean it and write to DFM format
         jersey_raw_fn=os.path.join(run_base_dir,'jersey-raw.nc')
         if not os.path.exists(jersey_raw_fn):
@@ -51,6 +50,8 @@ def add_delta_inflow(run_base_dir,
                                                         10], # "Temperature, water, degrees Celsius"
                                               days_per_request=30)
             jersey_raw.to_netcdf(jersey_raw_fn,engine='scipy')
+        else:
+            jersey_raw=xr.open_dataset(jersey_raw_fn)
 
         rio_vista_raw_fn=os.path.join(run_base_dir,'rio_vista-raw.nc')
         if not os.path.exists(rio_vista_raw_fn):
@@ -60,12 +61,24 @@ def add_delta_inflow(run_base_dir,
                                                            10], # "Temperature, water, degrees Celsius"
                                                  days_per_request=30)
             rio_vista_raw.to_netcdf(rio_vista_raw_fn,engine='scipy')
+        else:
+            rio_vista_raw=xr.open_dataset(rio_vista_raw_fn)
+    else:  # cache in nwis code
+        jersey_raw=usgs_nwis.nwis_dataset(station="11337190",
+                                          start_date=run_start-pad,end_date=run_stop+pad,
+                                          products=[60, # "Discharge, cubic feet per second"
+                                                    10], # "Temperature, water, degrees Celsius"
+                                          days_per_request='M',
+                                          cache_dir=common.cache_dir)
 
+        rio_vista_raw=usgs_nwis.nwis_dataset(station="11455420",
+                                             start_date=run_start-pad,end_date=run_stop+pad,
+                                             products=[60, # "Discharge, cubic feet per second"
+                                                       10], # "Temperature, water, degrees Celsius"
+                                             days_per_request='M',
+                                             cache_dir=common.cache_dir)
 
     if 1: # Clean and write it all out
-        jersey_raw=xr.open_dataset(jersey_raw_fn)
-        rio_vista_raw=xr.open_dataset(rio_vista_raw_fn)
-        
         for src_name,source in [ ('Jersey',jersey_raw),
                                  ('RioVista',rio_vista_raw)]:
             src_feat=dio.read_pli(os.path.join(static_dir,'%s.pli'%src_name))[0]
