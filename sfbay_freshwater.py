@@ -96,6 +96,9 @@ def add_sfbay_freshwater(run_base_dir,
 
     full_flows_ds = xr.open_dataset(os.path.join(freshwater_dir, 'outputs', 'sfbay_freshwater.nc'))
 
+    nudge_by_gage(full_flows_ds,'11169025',station='SCLARAVCc',decorr_days=20)
+    nudge_by_gage(full_flows_ds,'11180700',station='UALAMEDA', decorr_days=20)
+    
     # period of the full dataset which will be include for this run
     sel=(full_flows_ds.time > run_start - 5*DAY) & (full_flows_ds.time < run_stop + 5*DAY)
     flows_ds = full_flows_ds.isel(time=sel)
@@ -169,4 +172,60 @@ def add_sfbay_freshwater(run_base_dir,
 #  - PETALUMA => 381519122385601 PETALUMA R NR PETALUMA CA
 #  - NAPA => 11458000 NAPA R NR NAPA CA
 
+
+def nudge_by_gage(ds,usgs_station,station,decorr_days,period_start=None,period_end=None):
+    # This slicing may be stopping one sample shy, shouldn't be a problem.
+    if period_start is None:
+        period_start=ds.time.values[0]
+    if period_end is None:
+        period_end=ds.time.values[-1]
+        
+    usgs_gage=usgs_nwis.nwis_dataset(usgs_station,
+                                     products=[60],
+                                     start_date=period_start,
+                                     end_date=period_end,
+                                     days_per_request='M',
+                                     cache_dir=common.cache_dir)
+
+    # Downsample to daily
+    df=usgs_gage['stream_flow_mean_daily'].to_dataframe()
+    df.index=df.index.levels[0] # comes in MultiIndex even though it's a single level
+    df_daily=df.resample('D').mean()
+
+    # Get the subset of BAHM data which overlaps this gage data
+    time_slc=slice(np.searchsorted( ds.time, df_daily.index.values[0]),
+                   1+np.searchsorted( ds.time, df_daily.index.values[-1] ) )
+
+    bahm_subset=ds.sel(station=station).isel( time=time_slc )
+
+    assert len(bahm_subset.time) == len(df_daily),"Maybe BAHM data doesn't cover entire period"
+
+    errors=bahm_subset.flow_cfs - df_daily.stream_flow_mean_daily 
+
+    # Easiest: interpolate errors over nans, apply to bahm data array.
+    # the decorrelation time is tricky, though.
+
+    # Specify a decorrelation time scale then relax from error to zero
+    # over that period
+    valid=np.isfinite(errors)
+    errors_interp=np.interp( utils.to_dnum(ds.time),
+                             utils.to_dnum(df_daily.index[valid]),
+                             errors[valid])
+    all_valid=np.zeros( len(ds.time),'f8' )
+    all_valid[time_slc]=1*valid
+
+    weights=(2*filters.lowpass_fir(all_valid,decorr_days)).clip(0,1)
+    weighted_errors=weights*errors_interp
+
+    # Does this work? 
+    subset=dict(station=station)
+
+    cfs_vals=ds.flow_cfs.loc[subset] - weighted_errors
+    ds.flow_cfs.loc[subset] = cfs_vals.clip(0,np.inf) 
+    ds.flow_cms.loc[subset] = 0.028316847 * ds.flow_cfs.loc[subset]
+
+    # user feedback
+    cfs_shifts=weighted_errors[time_slc]
+    print("Shift in CFS: %.2f +- %.2f"%(np.mean(cfs_shifts),
+                                        np.std(cfs_shifts)))
 
