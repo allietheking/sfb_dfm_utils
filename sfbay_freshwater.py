@@ -1,9 +1,14 @@
 import os
 import numpy as np
 import xarray as xr
+import pandas as pd
 
 import stompy.model.delft.io as dio
-from . import dredge_grid
+from stompy import utils, filters
+from stompy.io.local import usgs_nwis
+
+from . import dredge_grid, common
+
 
 DAY=np.timedelta64(86400,'s') # useful for adjusting times
 
@@ -95,13 +100,12 @@ def add_sfbay_freshwater(run_base_dir,
     # be done by hand in the GUI
 
     full_flows_ds = xr.open_dataset(os.path.join(freshwater_dir, 'outputs', 'sfbay_freshwater.nc'))
-
-    nudge_by_gage(full_flows_ds,'11169025',station='SCLARAVCc',decorr_days=20)
-    nudge_by_gage(full_flows_ds,'11180700',station='UALAMEDA', decorr_days=20)
-    
     # period of the full dataset which will be include for this run
     sel=(full_flows_ds.time > run_start - 5*DAY) & (full_flows_ds.time < run_stop + 5*DAY)
     flows_ds = full_flows_ds.isel(time=sel)
+
+    nudge_by_gage(flows_ds,'11169025',station='SCLARAVCc',decorr_days=20)
+    nudge_by_gage(flows_ds,'11180700',station='UALAMEDA', decorr_days=20)
 
     if 1: # Special handling for Mowry Slough
         mowry_feat=None
@@ -156,8 +160,8 @@ def add_sfbay_freshwater(run_base_dir,
             else:
                 write_flow_data(stn_ds,src_name)
     
-
-
+    full_flows_ds.close()
+    
 ##
 
 # Override BAHM with gage data when available
@@ -189,7 +193,6 @@ def nudge_by_gage(ds,usgs_station,station,decorr_days,period_start=None,period_e
 
     # Downsample to daily
     df=usgs_gage['stream_flow_mean_daily'].to_dataframe()
-    df.index=df.index.levels[0] # comes in MultiIndex even though it's a single level
     df_daily=df.resample('D').mean()
 
     # Get the subset of BAHM data which overlaps this gage data
@@ -207,7 +210,7 @@ def nudge_by_gage(ds,usgs_station,station,decorr_days,period_start=None,period_e
 
     # Specify a decorrelation time scale then relax from error to zero
     # over that period
-    valid=np.isfinite(errors)
+    valid=np.isfinite(errors.values)
     errors_interp=np.interp( utils.to_dnum(ds.time),
                              utils.to_dnum(df_daily.index[valid]),
                              errors[valid])
@@ -226,6 +229,7 @@ def nudge_by_gage(ds,usgs_station,station,decorr_days,period_start=None,period_e
 
     # user feedback
     cfs_shifts=weighted_errors[time_slc]
-    print("Shift in CFS: %.2f +- %.2f"%(np.mean(cfs_shifts),
-                                        np.std(cfs_shifts)))
+    print("Nudge: %s => %s, shift in CFS: %.2f +- %.2f"%(usgs_station,station,
+                                                         np.mean(cfs_shifts),
+                                                         np.std(cfs_shifts)))
 

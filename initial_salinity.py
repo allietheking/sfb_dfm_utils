@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
 
-from stompy.spatial import interp_4d
+from stompy.spatial import interp_4d, proj_utils
 
 from stompy.grid import unstructured_grid
 from stompy.model.delft import dfm_grid
@@ -12,6 +12,8 @@ from stompy import utils
 from stompy.model import unstructured_diffuser
 
 from stompy.io.local import usgs_sfbay
+
+from . import common # cache_dir
 
 def add_initial_salinity(run_base_dir,
                          static_dir,
@@ -93,8 +95,12 @@ def samples_to_cells(init_salt,g):
     return cc_salt
 
 
-def samples_from_usgs(run_start,field='salinity'):
+def samples_from_usgs_erddap(run_start,field='salinity'):
     """
+    DEPRECATED.  Better to use the dynamically cached data from
+    samples_from_usgs().
+
+    --
     Pull some USGS transect data and return a set of 2D salinity
     samples appropriate for the given date.
     Caveats: This is currently using ERDDAP behind the scenes, which
@@ -130,7 +136,46 @@ def samples_from_usgs(run_start,field='salinity'):
     usgs_init_scal=np.c_[scal2d.x.values,scal2d.y.values,scal_f]
     return usgs_init_scal
 
-def samples_from_sfei_moorings(run_start):
+
+def samples_from_usgs(run_start,field='salinity'):
+    run_start=utils.to_dt64(run_start)
+    pad=np.timedelta64(30,'D')
+    
+    df=usgs_sfbay.query_usgs_sfbay(period_start=run_start-pad,
+                                   period_end=run_start+pad,
+                                   cache_dir=common.cache_dir)
+
+    # narrow to the columns we care about:
+    if field=='salinity':
+        dfield='Salinity'
+    elif field=='temperature':
+        dfield='Temperature'
+    else:
+        assert False,"Unknown field %s"%field
+        
+    df2=df.loc[:,['Date','Station Number','Depth',dfield]]
+    # will have to get coordinates from elsewhere
+
+    # depth average:
+    df3=df2.groupby( ['Date','Station Number'] )[dfield].mean()
+
+    run_start_dnum=utils.to_dnum(run_start)
+    def time_interp(grp):
+        dnums=[ utils.to_dnum(v[0]) for v in grp.index.values ]
+        return np.interp( run_start_dnum, dnums, grp.values )
+
+    ser4=df3.groupby('Station Number').apply(time_interp)
+
+    lls=[ usgs_sfbay.station_number_to_lonlat(s)
+          for s in ser4.index.values ]
+    lls=np.array(lls)
+    xys=proj_utils.mapper('WGS84','EPSG:26910')(lls)
+
+    # glue those together to get [N,3] array, {x,y,salt}
+    return np.c_[ xys, ser4.values ]
+
+
+def samples_from_sfei_moorings(run_start,static_dir):
     """
     return [N,3] array of salinity data from SFEI moorings appropriate for
     given date.  Note that this may have no data, but will be returned
@@ -189,10 +234,10 @@ def initial_salinity_dyn(run_base_dir,
     # Get some observations:
     usgs_init_salt=samples_from_usgs(run_start)
 
-    mooring_salt=samples_from_sfei_moorings(run_start)
+    mooring_salt=samples_from_sfei_moorings(run_start,static_dir=static_dir)
 
     init_salt=np.concatenate( (usgs_init_salt,
-                               sfei_init_salt) )
+                               mooring_salt) )
     ##
     g=dfm_grid.DFMGrid(os.path.join(run_base_dir,mdu['geometry','NetFile']))
 
@@ -235,3 +280,10 @@ def add_initial_salinity_dyn(run_base_dir,
         
     with open(old_bc_fn,'at') as fp:
         fp.write("\n".join(lines))
+
+
+
+##
+
+# Pull and cache USGS cruise data directly
+
