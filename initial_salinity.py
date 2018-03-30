@@ -25,7 +25,7 @@ def add_initial_salinity(run_base_dir,
     lines=[]
     if not all_flows_unit: # real initial condition:
         lines+=[ "QUANTITY=initialsalinity",
-                 "FILENAME=%s/saltopini.xyz"%static_dir_rel,
+                 "FILENAME=%s/orig-saltopini.xyz"%static_dir_rel,
                  "FILETYPE=7",
                  "METHOD=5",
                  "OPERAND=O",
@@ -38,7 +38,8 @@ def add_initial_salinity(run_base_dir,
                  "METHOD=5",
                  "OPERAND=O",
                  ""]
-        orig_salt=np.loadtxt(os.path.join(static_dir,'saltopini.xyz'))
+        orig_salt=np.loadtxt(os.path.join(static_dir,'orig-saltopini.xyz'))
+
         orig_salt[:,2]=35
         np.savetxt(os.path.join(run_base_dir,'constant_35ppt.xyz'),
                    orig_salt,
@@ -51,13 +52,6 @@ def add_initial_salinity(run_base_dir,
 
 
 ##
-
-# # Note - this code is fragile and assumes it is being run in lsb_dfm, not
-# # in sfb_dfm_utils.
-# run_start=np.datetime64('2015-12-15')
-# saltopini_xyz=np.loadtxt('inputs-static/saltopini.xyz')
-# mdu={('geometry','NetFile'):'lsb_v99_net.nc'}
-# run_base_dir="runs/short_winter2016_04"
 
 def samples_to_cells(init_salt,g):
     """
