@@ -63,7 +63,7 @@ def add_ocean(run_base_dir,
 
                 tides.to_netcdf(tides_raw_fn,engine='scipy')
             else:
-                tides=xr.open_dataset(tides_raw_fn).isel(station=0)
+                tides=xr.open_dataset(tides_raw_fn)
         else:
             # rely on caching within noaa_coops
             tides=noaa_coops.coops_dataset(tide_gage,
@@ -71,7 +71,10 @@ def add_ocean(run_base_dir,
                                            ["water_level","water_temperature"],
                                            days_per_request='M',
                                            cache_dir=common.cache_dir)
-
+    # Those retain station as a dimension of length 1 - drop that dimension
+    # here:
+    tides=tides.isel(station=0)
+    
     # Fort Point mean tide range is 1.248m, vs. 1.193 at Point Reyes.
     # apply rough correction to amplitude.
     # S2 phase 316.2 at Pt Reyes, 336.2 for Ft. Point.
