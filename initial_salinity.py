@@ -15,6 +15,9 @@ from stompy.io.local import usgs_sfbay
 
 from . import common # cache_dir
 
+import logging
+logger=logging.getLogger('initial_salinity')
+
 def add_initial_salinity(run_base_dir,
                          static_dir,
                          old_bc_fn,
@@ -200,8 +203,11 @@ def samples_from_sfei_moorings(run_start,static_dir):
 
     for name,l2_file in sfei_moorings:
         print(name)
-        sfei=pd.read_csv(os.path.join(L2_dir,l2_file),
-                         parse_dates=['Datetime','dt'],low_memory=False)
+        fn=os.path.join(L2_dir,l2_file)
+        if not os.path.exists(fn):
+            logger.warning("No SFEI mooring data - will not be able to initialize LSB initial condition")
+            continue
+        sfei=pd.read_csv(fn,parse_dates=['Datetime','dt'],low_memory=False)
         sfei_salt=sfei['S_PSU']
         valid=~(sfei_salt.isnull())
         # limit to data within 20 days of the request
