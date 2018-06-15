@@ -1,15 +1,19 @@
+from __future__ import print_function
 import os
+import six
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
 
-from stompy.spatial import interp_4d, proj_utils
+from stompy.spatial import interp_4d
 
 from stompy.grid import unstructured_grid
 from stompy.model.delft import dfm_grid
-from stompy.spatial import wkb2shp
+from stompy.spatial import wkb2shp, proj_utils
 from stompy import utils
 from stompy.model import unstructured_diffuser
+
+import logging
 
 from stompy.io.local import usgs_sfbay
 
@@ -168,6 +172,86 @@ def samples_from_usgs(run_start,field='salinity'):
     # glue those together to get [N,3] array, {x,y,salt}
     return np.c_[ xys, ser4.values ]
 
+##
+
+def samples_from_sfei_erddap(run_start,cache_dir=None):
+    """
+    return [N,3] array of salinity data from SFEI moorings appropriate for
+    given date.  Note that this may have no data, but will be returned
+    as a [0,3] array
+
+    This version fetches and caches data from SFEI's ERDDAP server
+    """
+    if cache_dir is None:
+        cache_dir=common.cache_dir
+        
+    dt_str=utils.to_datetime(run_start).strftime('%Y%m%d%H%M')
+    if cache_dir is not None:
+        my_cache_dir=os.path.join(cache_dir,'enviz_erddap')
+        os.path.exists(my_cache_dir) or os.mkdir(my_cache_dir)
+
+        cache_fn=os.path.join(my_cache_dir,"temp_salt-%s.csv"%dt_str)
+        print("Cache fn: %s"%cache_fn)
+    else:
+        cache_fn=None
+
+    if cache_fn is not None and os.path.exists(cache_fn):
+        csv_data=cache_fn
+    else:
+        # Fetch data before/after run_start by this much
+        pad=np.timedelta64(30*60,'s')
+        fetch_period=[run_start-pad,run_start+pad]
+        fetch_strs=[ utils.to_datetime(p).strftime('%Y-%m-%dT%H:%M:00Z')
+                     for p in fetch_period ]
+
+        # Because the table in ERDDAP is stored by sample, there is not guarantee that
+        # times are increasing.  That makes access via opendap inefficient, so instead
+        # specify the query to ERDDAP more directly, and grab CSV for easier human
+        # readability
+
+        # choose dataset
+        base_url="http://sfbaynutrients.sfei.org/erddap/tabledap/enviz_mirror.csv"
+        # choose fields to download
+        params=",".join( ['stationcode','time','spcond_uS_cm','temp_C','stationname',
+                          'latitude','longitude'] )
+        # And the time range
+        criteria="time%%3E=%s&time%%3C=%s"%tuple(fetch_strs)
+        url=base_url + "?" + params + "&" + criteria
+
+        import requests
+        logging.info("Fetching SFEI data from %s"%url)
+        resp=requests.get(url)
+
+        if cache_fn is not None:
+            with open(cache_fn,'wt') as fp:
+                fp.write(resp.content.decode())
+            csv_data=cache_fn
+        else:
+            csv_data=six.StringIO(resp.content.decode())
+        
+
+    # 2nd row of file has units, which we ignore.
+    df=pd.read_csv(csv_data,skiprows=[1],parse_dates=['time'])
+
+    # Could get fancier and choose the closest in time reading, or
+    # interpolate.  But this is not too bad, averaging over a total of
+    # 1 hour.
+    dfm=df.groupby('stationcode').mean()
+
+    # Get salinity from specific conductance
+    import seawater as sw
+    # specific conductance to mS/cm, and ratio to conductivityt at 35 psu, 15 degC.
+    # Note that mooring data comes in already adjusted to "specific conductance
+    # in uS/cm at 25 degC"
+    rt=dfm['spcond_uS_cm'].values/1000. / sw.constants.c3515
+    dfm['salinity']=sw.sals(rt,25.0)
+
+    ll=np.c_[dfm.longitude.values,dfm.latitude.values]
+    xy=proj_utils.mapper('WGS84','EPSG:26910')(ll)
+
+    xys=np.c_[xy,dfm['salinity'].values]
+    valid=np.isfinite(xys[:,2])
+    return xys[valid,:]
 
 def samples_from_sfei_moorings(run_start,static_dir):
     """
@@ -228,7 +312,8 @@ def initial_salinity_dyn(run_base_dir,
     # Get some observations:
     usgs_init_salt=samples_from_usgs(run_start)
 
-    mooring_salt=samples_from_sfei_moorings(run_start,static_dir=static_dir)
+    # mooring_salt=samples_from_sfei_moorings(run_start,static_dir=static_dir)
+    mooring_salt=samples_from_sfei_erddap(run_start)
 
     init_salt=np.concatenate( (usgs_init_salt,
                                mooring_salt) )
