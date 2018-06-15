@@ -69,35 +69,65 @@ def add_erddap_ludwig_wind(run_base_dir,run_start,run_stop,old_bc_fn,fallback=No
 
 
 def add_constant_wind(run_base_dir,mdu,wind,run_start,run_stop):
-    grid_fn=os.path.join(run_base_dir,mdu['geometry','NetFile'])
+    """
+    Add a constant in time and space wind field.
+    """
+    base_wind=xr.Dataset()
+    base_wind['wind_u']=wind[0]
+    base_wind['wind_v']=wind[1]
+
+    return add_wind_from_dataset(mdu,base_wind)
+
+def add_wind_dataset(mdu,base_wind):
+    """
+    mdu: MDUFile object (assumes that mdu.base_path has been set)
+    """
+    run_base_dir=mdu.base_path
+    assert run_base_dir is not None
     
+    grid_fn=mdu.filepath( ['geometry','NetFile'] )
     g=dfm_grid.DFMGrid(grid_fn)
 
+    t_ref,run_start,run_stop=mdu.time_range()
+    
     # manufacture a constant in time, constant in space wind field
     ds=xr.Dataset()
+    if 'time' in base_wind.dims:
+        ds['time']=('time',),base_wind.time
+        if ds.time.values[0]>run_start:
+            log.warning("In add_wind_dataset(), start time is after model start")
+        if ds.time.values[-1]<run_stop:
+            log.warning("In add_wind_dataset(), end time is before model end")
+    else:
+        DAY=np.timedelta64(1,'D')
+        data_start=run_start-1*DAY
+        data_stop=run_stop+1*DAY
+        t=np.array([data_start, data_stop] )
+        ds['time']=('time',),t
 
     xxyy=g.bounds()
     pad=0.1*(xxyy[1]-xxyy[0])
+        
+    if 'x' in base_wind.dims:
+        ds['x']=('x',),base_wind.x
+    else:
+        ds['x']=('x',),np.linspace(xxyy[0]-pad,xxyy[1]+pad,2)
 
-    x=np.linspace(xxyy[0]-pad,xxyy[1]+pad,2)
-    y=np.linspace(xxyy[2]-pad,xxyy[3]+pad,3)
+    if 'y' in base_wind.dims:
+        ds['y']=('y',),base_wind.y
+    else:
+        ds['y']=('y',),np.linspace(xxyy[2]-pad,xxyy[3]+pad,3)
 
-    DAY=np.timedelta64(1,'D')
-    data_start=run_start-1*DAY
-    data_stop=run_stop+1*DAY
+    # Here is the magic where xarray broadcasts the dimensions as needed to get
+    # (time,y,x) wind data.
+    _,_,_,new_u,new_v=xr.broadcast(ds.time,ds.y,ds.x,base_wind.wind_u,base_wind.wind_v)
+        
+    ds['wind_u']=new_u 
+    ds['wind_v']=new_v
 
-    t=np.arange(data_start,data_stop,np.timedelta64(3,'h'))
-
-    ds['x']=('x',),x
-    ds['y']=('y',),y
-    ds['time']=('time',),t
-
-    ds['wind_u']=('time','y','x'),wind[0]*np.ones( (len(t),len(y),len(x)) )
-    ds['wind_v']=('time','y','x'),wind[1]*np.ones( (len(t),len(y),len(x)) )
-
-    count=dio.dataset_to_dfm_wind(ds,data_start,data_stop,
+    count=dio.dataset_to_dfm_wind(ds,ds.time.values[0],ds.time.values[-1],
                                   target_filename_base=os.path.join(run_base_dir,"const_wind"),
-                                  extra_header="# constant %.2f %.2f wind"%(wind[0],wind[1]))
+                                  extra_header="# generated from xarray dataset input")
     assert count>0
 
     # and add wind to the boundary forcing
@@ -113,7 +143,7 @@ def add_constant_wind(run_base_dir,mdu,wind,run_start,run_stop):
                  "METHOD=2",
                  "OPERAND=O",
                  "\n"]
-    old_bc_fn=os.path.join(run_base_dir,mdu['external forcing','ExtForceFile'])
+    old_bc_fn=mdu.filepath(['external forcing','ExtForceFile'])
     
     with open(old_bc_fn,'at') as fp:
         fp.write("\n".join(wind_stanza))
