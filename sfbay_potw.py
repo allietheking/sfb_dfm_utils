@@ -16,10 +16,16 @@ def add_sfbay_potw(run_base_dir,
                    grid,dredge_depth,
                    old_bc_fn,
                    all_flows_unit=False,
-                   time_offset=None):
+                   time_offset=None,
+                   write_salt=True,write_temp=True):
     """
     time_offset: shift all dates by the given offset.  To run 2016 
     with data from 2015, specify np.timedelta64(-365,'D')
+
+    write_salt: leave as True for older DFM, and newer DFM only set to
+    true when the simulation includes salinity.
+
+    write_temp: same, but for temperature
     """
     if time_offset is not None:
         run_start = run_start + time_offset
@@ -123,10 +129,17 @@ def add_sfbay_potw(run_base_dir,
                         flow_cms=1.0
                     else:
                         flow_cms=potw.flow[tidx]
-                        
-                    tim_fp.write("%g %g %g %g\n"%(tstamp_minutes,
-                                                  flow_cms,
-                                                  0.0, # salinity
-                                                  20.0)) # temperature...
+
+                    items=[tstamp_minutes,flow_cms]
+                    if write_salt:
+                        items.append(0.0)
+                    if write_temp:
+                        items.append(20.0)
+                    
+                    tim_fp.write(" ".join(["%g"%v for v in items])+"\n")
+                    # "%g %g %g %g\n"%(tstamp_minutes,
+                    #                               flow_cms,
+                    #                               0.0, # salinity
+                    #                               20.0)) # temperature...
 
     six.print_("Done with POTWs")

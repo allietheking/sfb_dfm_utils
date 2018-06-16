@@ -17,7 +17,7 @@ def add_erddap_ludwig_wind(run_base_dir,run_start,run_stop,old_bc_fn,fallback=No
     forcing stanzas to old-style DFM boundary forcing file.
 
     Wind data are fetched from ERDDAP, and written to DFM format
-    
+
     run_base_dir: path to the run
     run_start,run_stop: target period of the run as datetime64
     old_bc_fn: path to the old-style boundary forcing file
@@ -76,7 +76,7 @@ def add_constant_wind(run_base_dir,mdu,wind,run_start,run_stop):
     base_wind['wind_u']=wind[0]
     base_wind['wind_v']=wind[1]
 
-    return add_wind_from_dataset(mdu,base_wind)
+    return add_wind_dataset(mdu,base_wind)
 
 def add_wind_dataset(mdu,base_wind):
     """
@@ -84,12 +84,12 @@ def add_wind_dataset(mdu,base_wind):
     """
     run_base_dir=mdu.base_path
     assert run_base_dir is not None
-    
+
     grid_fn=mdu.filepath( ['geometry','NetFile'] )
     g=dfm_grid.DFMGrid(grid_fn)
 
     t_ref,run_start,run_stop=mdu.time_range()
-    
+
     # manufacture a constant in time, constant in space wind field
     ds=xr.Dataset()
     if 'time' in base_wind.dims:
@@ -107,7 +107,7 @@ def add_wind_dataset(mdu,base_wind):
 
     xxyy=g.bounds()
     pad=0.1*(xxyy[1]-xxyy[0])
-        
+
     if 'x' in base_wind.dims:
         ds['x']=('x',),base_wind.x
     else:
@@ -121,7 +121,7 @@ def add_wind_dataset(mdu,base_wind):
     # Here is the magic where xarray broadcasts the dimensions as needed to get
     # (time,y,x) wind data.
     _,_,_,new_u,new_v=xr.broadcast(ds.time,ds.y,ds.x,base_wind.wind_u,base_wind.wind_v)
-        
+
     ds['wind_u']=new_u 
     ds['wind_v']=new_v
 
@@ -144,7 +144,7 @@ def add_wind_dataset(mdu,base_wind):
                  "OPERAND=O",
                  "\n"]
     old_bc_fn=mdu.filepath(['external forcing','ExtForceFile'])
-    
+
     with open(old_bc_fn,'at') as fp:
         fp.write("\n".join(wind_stanza))
     return True
