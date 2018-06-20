@@ -12,12 +12,10 @@ from . import dredge_grid, common
 
 DAY=np.timedelta64(86400,'s') # useful for adjusting times
 
-def add_sfbay_freshwater(run_base_dir,
-                         run_start,run_stop,ref_date,
+def add_sfbay_freshwater(mdu,
                          adjusted_pli_fn,
                          freshwater_dir,
                          grid,dredge_depth,
-                         old_bc_fn,
                          all_flows_unit=False,
                          time_offset=None):
     """
@@ -35,6 +33,10 @@ def add_sfbay_freshwater(run_base_dir,
     specify np.timedelta64(-365,'D').
     Slightly safer to use days than years here.
     """
+    run_base_dir=mdu.base_path
+    ref_date,run_start,run_stop = mdu.time_range()
+    old_bc_fn=mdu.filepath(["external forcing","ExtForceFile"])
+    
     if time_offset is not None:
         run_start = run_start + time_offset
         run_stop = run_stop + time_offset

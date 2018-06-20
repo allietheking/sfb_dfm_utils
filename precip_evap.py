@@ -11,14 +11,22 @@ import xarray as xr
 import numpy as np
 from stompy import utils
 
+from stompy.io.local import cimis
+
 # Last SUNTANS run had used NARR
 # it's way way coarse.  Seems better to use an in-Bay climatology
 # than to use NARR.
+from . import common
 
 ##
 
-def load_cimis():
-    union_city=xr.open_dataset('/opt/data/cimis/union_city-hourly-2001-2016.nc')
+def load_cimis(start_date,end_date):
+    union_city=cimis.cimis_fetch_to_xr(stations=171,
+                                       start_date=start_date,
+                                       end_date=end_date,
+                                       cache_dir=common.cache_dir)
+                                       
+    # union_city=xr.open_dataset('/opt/data/cimis/union_city-hourly-2001-2016.nc')
 
     # https://cals.arizona.edu/azmet/et1.htm
     # which says cool period, divide ETO by 0.7 to get pan evaporation,
@@ -38,26 +46,11 @@ def load_cimis():
 # relevant fields are union_city.time, union_city.HlyEvap, and union_city.HlyPrecip
 # Times are adjusted from assumed PST to UTC
 
-
-def mdu_time_range(mdu):
-    t_ref=utils.to_dt64( datetime.datetime.strptime(mdu['time','RefDate'],'%Y%m%d') )
-
-    if mdu['time','Tunit'].lower() == 'm':
-        tunit=np.timedelta64(1,'m')
-    else:
-        raise Exception("TODO: allow other time units")
-    
-    t_start = t_ref+int(mdu['time','tstart'])*tunit
-    t_stop = t_ref+int(mdu['time','tstop'])*tunit
-    return t_ref,t_start,t_stop
-
 def add_cimis_evap_precip(run_base_dir,mdu,scale_precip=1.0,scale_evap=1.0):
-    data = load_cimis()
-
     pad=np.timedelta64(5,'D')
-
-    t_ref,t_start,t_stop=mdu_time_range(mdu)
-
+    t_ref,t_start,t_stop=mdu.time_range()
+    data = load_cimis(t_start-pad,t_stop+pad)
+                                       
     old_bc_fn=os.path.join(run_base_dir,mdu['external forcing','ExtForceFile'])
 
     with open(old_bc_fn,'at') as fp:

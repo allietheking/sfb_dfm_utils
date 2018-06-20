@@ -9,12 +9,10 @@ from . import dredge_grid
 
 DAY=np.timedelta64(1,'D')
 
-def add_sfbay_potw(run_base_dir,
-                   run_start,run_stop,ref_date,
+def add_sfbay_potw(mdu,
                    potw_dir,
                    adjusted_pli_fn,
                    grid,dredge_depth,
-                   old_bc_fn,
                    all_flows_unit=False,
                    time_offset=None,
                    write_salt=True,write_temp=True):
@@ -27,6 +25,10 @@ def add_sfbay_potw(run_base_dir,
 
     write_temp: same, but for temperature
     """
+    run_base_dir=mdu.base_path
+    ref_date,run_start,run_stop = mdu.time_range()
+    old_bc_fn=mdu.filepath(["external forcing","ExtForceFile"])
+
     if time_offset is not None:
         run_start = run_start + time_offset
         run_stop = run_stop + time_offset
@@ -135,11 +137,7 @@ def add_sfbay_potw(run_base_dir,
                         items.append(0.0)
                     if write_temp:
                         items.append(20.0)
-                    
+
                     tim_fp.write(" ".join(["%g"%v for v in items])+"\n")
-                    # "%g %g %g %g\n"%(tstamp_minutes,
-                    #                               flow_cms,
-                    #                               0.0, # salinity
-                    #                               20.0)) # temperature...
 
     six.print_("Done with POTWs")
