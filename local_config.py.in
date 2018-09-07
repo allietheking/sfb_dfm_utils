@@ -1,4 +1,4 @@
 # paths related to local file structure
 
-cache_path="/opt/data/delft/cache"
+cache_path="/home/rusty/cache"
 
