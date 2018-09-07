@@ -39,7 +39,7 @@ def fetch_range( lon_range,lat_range,time_range ):
     time_range: [time_min,time_max]
     returns a list of local netcdf filenames, one per time step
 
-    Limitations: 
+    Limitations:
      * fetch daily snapshots, though source has every 3 hours
      * not ready for time ranges that span multiple HYCOM experiments.
     """
@@ -47,7 +47,7 @@ def fetch_range( lon_range,lat_range,time_range ):
 
     cache_dir=os.path.join( local_config.cache_path, 'hycom')
     os.path.exists(cache_dir) or os.mkdir(cache_dir)
-    
+
     last_ds=None
     lon_slice=None
     lat_slice=None
@@ -66,7 +66,9 @@ def fetch_range( lon_range,lat_range,time_range ):
             log.info("Fetching %s"%cache_name)
             ds=hycom_opendap_for_time(t)
             if ds is not last_ds:
-                lon_slice=slice(*np.searchsorted(ds.lon.values%360.0,lon_range%360.0))
+                # Careful to deal with +-360 possibility
+                lon0=ds.lon.values[0]
+                lon_slice=slice(*np.searchsorted((ds.lon.values-lon0)%360.0,(lon_range-lon0)%360.0))
                 lat_slice=slice(*np.searchsorted(ds.lat.values,lat_range))
                 last_ds=ds
 
