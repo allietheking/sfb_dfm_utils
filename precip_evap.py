@@ -66,6 +66,10 @@ def add_cimis_evap_precip(run_base_dir,mdu,scale_precip=1.0,scale_evap=1.0):
     sel=((data.time>=t_start-pad)&(data.time<=t_stop+pad)).values
     minutes=(data.time.values[sel] - t_ref) / np.timedelta64(60,'s')
 
+    # emma added the following two lines
+    ind = np.where(np.isfinite(data.HlyPrecip.values)==False)
+    data.HlyPrecip[ind] = 0.0
+
     # starting unit: mm/hr
     # What unit do they want? some mentions in the source of mm/hr, other times
     # mm/day.  I think they want mm/day.  Initial look at the rain values in the
