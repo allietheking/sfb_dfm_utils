@@ -16,7 +16,7 @@ from . import dredge_grid
 # Sea_0001.pli - 
 
 
-def add_delta_inflow(mdu
+def add_delta_inflow(mdu,
                      rel_bc_dir,
                      static_dir,
                      grid,dredge_depth,
