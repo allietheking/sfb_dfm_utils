@@ -21,12 +21,22 @@ from . import common
 ##
 
 def load_cimis(start_date,end_date):
-    union_city=cimis.cimis_fetch_to_xr(stations=171,
-                                       start_date=start_date,
-                                       end_date=end_date,
-                                       cache_dir=common.cache_dir)
+    
+    # undo this change rusty made because don't want to deal with putting cimis key in local environment
+    # but also change the name to not limit to 2001-2016 and check that dates are included (alliek@sfei.org)
+    #union_city=cimis.cimis_fetch_to_xr(stations=171,
+    #                                   start_date=start_date,
+    #                                   end_date=end_date,
+    #                                   cache_dir=common.cache_dir)
                                        
     # union_city=xr.open_dataset('/opt/data/cimis/union_city-hourly-2001-2016.nc')
+    union_city=xr.open_dataset('/opt/data/cimis/union_city-hourly.nc')
+    
+    # add a check that the date range is ok
+    if datetime.datetime.strptime(union_city.Date.values[0],'%Y-%m-%d %H%M')>start_date:
+        raise Exception('/opt/data/cimis/union_city-hourly.nc start date is after simulation start date')
+    if datetime.datetime.strptime(union_city.Date.values[-1],'%Y-%m-%d %H%M')<end_date:
+        raise Exception('/opt/data/cimis/union_city-hourly.nc end date is before simulation end date')
 
     # https://cals.arizona.edu/azmet/et1.htm
     # which says cool period, divide ETO by 0.7 to get pan evaporation,
