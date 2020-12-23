@@ -33,9 +33,15 @@ def load_cimis(start_date,end_date):
     union_city=xr.open_dataset('/opt/data/cimis/union_city-hourly.nc')
     
     # add a check that the date range is ok
-    if datetime.datetime.strptime(union_city.Date.values[0],'%Y-%m-%d %H%M')>start_date:
+    uc_start = (np.datetime64(union_city.Date.values[0][0:10]) 
+                  + np.timedelta64(union_city.Date.values[0][11:13],'h')
+                  + np.timedelta64(union_city.Date.values[0][13:],'m'))
+    uc_end = (np.datetime64(union_city.Date.values[-1][0:10]) 
+                  + np.timedelta64(union_city.Date.values[-1][11:13],'h')
+                  + np.timedelta64(union_city.Date.values[-1][13:],'m'))
+    if uc_start>start_date:
         raise Exception('/opt/data/cimis/union_city-hourly.nc start date is after simulation start date')
-    if datetime.datetime.strptime(union_city.Date.values[-1],'%Y-%m-%d %H%M')<end_date:
+    if uc_end<end_date:
         raise Exception('/opt/data/cimis/union_city-hourly.nc end date is before simulation end date')
 
     # https://cals.arizona.edu/azmet/et1.htm
