@@ -13,6 +13,7 @@ from . import dredge_grid, common
 DAY=np.timedelta64(86400,'s') # useful for adjusting times
 
 def add_sfbay_freshwater(mdu,
+                         rel_bc_dir,     # added directory for bc files alliek dec 2020
                          adjusted_pli_fn,
                          freshwater_dir,
                          grid,dredge_depth,
@@ -57,7 +58,7 @@ def add_sfbay_freshwater(mdu,
                                  ('salinitybnd','_salt'),
                                  ('temperaturebnd','_temp') ]:
             lines=['QUANTITY=%s'%quantity,
-                   'FILENAME=%s%s.pli'%(src_name,suffix),
+                   'FILENAME=%s/%s%s.pli'%(rel_bc_dir,src_name,suffix), # added rel_bc_dir alliek dec 2020
                    'FILETYPE=9',
                    'METHOD=3',
                    'OPERAND=O',
@@ -66,7 +67,7 @@ def add_sfbay_freshwater(mdu,
                 fp.write("\n".join(lines))
 
             # read the pli back to know how to name the per-node timeseries
-            feats=dio.read_pli(os.path.join(run_base_dir,
+            feats=dio.read_pli(os.path.join(run_base_dir,rel_bc_dir, # added rel_bc_dir alliek dec 2020
                                             "%s%s.pli"%(src_name,suffix)))
             feat=feats[0] # just one polyline in the file
 
@@ -80,7 +81,7 @@ def add_sfbay_freshwater(mdu,
                 if not node_name:
                     node_name="%s%s_%04d"%(src_name,suffix,1+node_idx)
 
-                tim_fn=os.path.join(run_base_dir,node_name+".tim")
+                tim_fn=os.path.join(run_base_dir,rel_bc_dir,node_name+".tim") # added rel_bc_dir alliek dec 2020
 
                 columns=['elapsed_minutes']
                 if quantity=='dischargebnd':
@@ -120,7 +121,7 @@ def add_sfbay_freshwater(mdu,
                 for suffix in ['_flow','_salt','_temp']:
                     # function to add suffix
                     feat_suffix=dio.add_suffix_to_feature(mowry_feat,suffix)
-                    pli_fn=os.path.join(run_base_dir,"%s%s.pli"%(src_name,suffix))
+                    pli_fn=os.path.join(run_base_dir,rel_bc_dir,"%s%s.pli"%(src_name,suffix)) # added rel_bc_dir alliek dec 2020
                     dio.write_pli(pli_fn,[feat_suffix])
 
                 dredge_grid.dredge_boundary(grid,mowry_feat[1],dredge_depth)
@@ -147,7 +148,7 @@ def add_sfbay_freshwater(mdu,
             for suffix in ['_flow','_salt','_temp']:
                 # function to add suffix
                 feat_suffix=dio.add_suffix_to_feature(feat,suffix)
-                pli_fn=os.path.join(run_base_dir,"%s%s.pli"%(src_name,suffix))
+                pli_fn=os.path.join(run_base_dir,rel_bc_dir,"%s%s.pli"%(src_name,suffix)) # added rel_bc_dir alliek dec 2020
                 dio.write_pli(pli_fn,[feat_suffix])
 
             dredge_grid.dredge_boundary(grid,feat[1],dredge_depth)

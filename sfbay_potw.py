@@ -10,6 +10,7 @@ from . import dredge_grid
 DAY=np.timedelta64(1,'D')
 
 def add_sfbay_potw(mdu,
+                   rel_src_dir, # added rel_src_dir alliek dec 2020
                    potw_dir,
                    adjusted_pli_fn,
                    grid,dredge_depth,
@@ -66,17 +67,17 @@ def add_sfbay_potw(mdu,
             six.print_("%s "%site_s,end="")
 
             fp.write( ("QUANTITY=discharge_salinity_temperature_sorsin\n"
-                       "FILENAME=%s.pli\n"
+                       "FILENAME=%s/%s.pli\n"
                        "FILETYPE=9\n"
                        "METHOD=1\n"
                        "OPERAND=O\n"
                        "AREA=0 # no momentum\n"
-                       "\n")%site_s )
+                       "\n")%(rel_src_dir,site_s) ) # added rel_src_dir alliek dec 2020
 
             # Write the location - writing a single point appears to work,
             # based on how it shows up in the GUI.  Otherwise we'd have to
             # manufacture a point outside the domain.
-            with open(os.path.join(run_base_dir,'%s.pli'%site_s),'wt') as pli_fp:
+            with open(os.path.join(run_base_dir,rel_src_dir,'%s.pli'%site_s),'wt') as pli_fp: # added rel_src_dir alliek dec 2020
                 # Scan adjusted features for a match to use instead
                 # This is handled slightly differently with POTWs - use the
 
@@ -123,7 +124,7 @@ def add_sfbay_potw(mdu,
 
                 dredge_grid.dredge_discharge(grid,feat[1],dredge_depth)
 
-            with open(os.path.join(run_base_dir,'%s.tim'%site_s),'wt') as tim_fp:
+            with open(os.path.join(run_base_dir,rel_src_dir,'%s.tim'%site_s),'wt') as tim_fp: # added rel_src_dir alliek dec 2020
                 for tidx in time_idxs:
                     tstamp_minutes = (potw.time[tidx]-ref_date) / np.timedelta64(1,'m')
 
